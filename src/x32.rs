@@ -475,7 +475,7 @@ impl GainBankProbe {
             });
         }
 
-        if let Some(index) = self.read_headamp_index(socket, target)? {
+        if gain_uses_headamp(target) && let Some(index) = self.read_headamp_index(socket, target)? {
             let path = headamp_gain_path(index);
             let request = osc_query(&path);
             socket
@@ -564,6 +564,10 @@ impl GainBankProbe {
             Ok(Some(value as u8))
         }
     }
+}
+
+fn gain_uses_headamp(target: FaderTarget) -> bool {
+    !matches!(target, FaderTarget::Channel(17..=32))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1563,11 +1567,11 @@ fn encode_headamp_gain(db: f32) -> f32 {
 }
 
 fn decode_trim_gain(raw: f32) -> f32 {
-    quantize_gain_step(raw, -18.0, 0.25)
+    quantize_gain_step(raw.clamp(0.0, 1.0) * 36.0 - 18.0, -18.0, 0.25)
 }
 
 fn encode_trim_gain(db: f32) -> f32 {
-    quantize_gain_step(db, -18.0, 0.25)
+    ((quantize_gain_step(db, -18.0, 0.25) + 18.0) / 36.0).clamp(0.0, 1.0)
 }
 
 fn quantize_gain_step(value: f32, min: f32, step: f32) -> f32 {

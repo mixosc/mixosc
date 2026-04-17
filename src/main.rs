@@ -3,6 +3,11 @@ use iced::futures::{channel::mpsc, stream::BoxStream, StreamExt};
 use iced::stream;
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Background, Border, Color, Element, Fill, Length, Subscription, Task, Theme, time};
+use iced_fonts::LUCIDE_FONT_BYTES;
+use iced_fonts::lucide::{
+    audio_lines, audio_waveform, equal, file_input, panel_left, send, shield,
+    sliders_vertical, toggle_left,
+};
 use maolan_widgets::horizontal_slider::horizontal_slider;
 use maolan_widgets::meters::meters;
 use maolan_widgets::slider::slider as vertical_slider;
@@ -107,6 +112,7 @@ fn main() -> iced::Result {
     iced::application(new, update, view)
         .subscription(subscription)
         .theme(theme)
+        .font(LUCIDE_FONT_BYTES)
         .window_size(iced::Size::new(720.0, 360.0))
         .run()
 }
@@ -121,6 +127,7 @@ struct StatusApp {
     colors: [Option<u8>; STRIP_COUNT],
     gains: [Option<f32>; STRIP_COUNT],
     gain_sources: [GainSource; STRIP_COUNT],
+    gain_drag_values: [Option<f32>; STRIP_COUNT],
     sends: [[Option<f32>; SEND_BUS_COUNT]; STRIP_COUNT],
     pans: [Option<f32>; STRIP_COUNT],
     faders: [Option<f32>; STRIP_COUNT],
@@ -148,6 +155,7 @@ enum Message {
     Tick,
     ConsoleUpdateReceived(Result<ConsoleUpdate, String>),
     GainChanged(usize, f32),
+    GainReleased(usize),
     SendChanged(usize, usize, f32),
     PanChanged(usize, f32),
     FaderChanged(usize, f32),
@@ -187,6 +195,7 @@ fn new() -> (StatusApp, Task<Message>) {
         colors: [None; STRIP_COUNT],
         gains: [None; STRIP_COUNT],
         gain_sources: [GainSource::Trim; STRIP_COUNT],
+        gain_drag_values: [None; STRIP_COUNT],
         sends: [[None; SEND_BUS_COUNT]; STRIP_COUNT],
         pans: [None; STRIP_COUNT],
         faders: [None; STRIP_COUNT],
@@ -227,18 +236,24 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
                         .iter()
                         .position(|target| *target == strip.target)
                     {
-                        match (app.gain_sources[index], strip.source) {
-                            (GainSource::Headamp(_), GainSource::Trim) => {}
-                            _ => {
-                                app.gains[index] = Some(strip.value);
-                                app.gain_sources[index] = strip.source;
-                            }
+                        let keep_headamp_source = matches!(
+                            (VISIBLE_STRIPS[index], app.gain_sources[index], strip.source),
+                            (
+                                FaderTarget::Channel(1..=16),
+                                GainSource::Headamp(_),
+                                GainSource::Trim
+                            )
+                        );
+
+                        if !keep_headamp_source {
+                            app.gains[index] = Some(strip.value);
+                            app.gain_sources[index] = strip.source;
                         }
                     }
                 }
                 Ok(ConsoleUpdate::HeadampGain { index: headamp_index, value }) => {
-                    for (strip_index, source) in app.gain_sources.iter().enumerate() {
-                        if *source == GainSource::Headamp(headamp_index) {
+                    for strip_index in 0..STRIP_COUNT {
+                        if app.gain_sources[strip_index] == GainSource::Headamp(headamp_index) {
                             app.gains[strip_index] = Some(value);
                         }
                     }
@@ -326,6 +341,9 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
         Message::GainChanged(index, value) => {
             let source = app.gain_sources[index];
             let value = quantize_gain_value(value, source);
+            if let Some(drag_value) = app.gain_drag_values.get_mut(index) {
+                *drag_value = Some(value);
+            }
             if let Some(gain) = app.gains.get_mut(index) {
                 *gain = Some(value);
             }
@@ -335,6 +353,17 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
             };
             let target = VISIBLE_STRIPS[index];
             spawn_set_gain(mixer_addr, target, source, value)
+        }
+        Message::GainReleased(index) => {
+            if let Some(Some(value)) = app.gain_drag_values.get(index).copied()
+                && let Some(gain) = app.gains.get_mut(index)
+            {
+                *gain = Some(value);
+            }
+            if let Some(drag_value) = app.gain_drag_values.get_mut(index) {
+                *drag_value = None;
+            }
+            Task::none()
         }
         Message::SendChanged(strip_index, bus_index, value) => {
             if let Some(send) = app.sends[strip_index].get_mut(bus_index) {
@@ -801,68 +830,216 @@ fn theme(_app: &StatusApp) -> Theme {
 }
 
 fn view(app: &StatusApp) -> Element<'_, Message> {
-    if matches!(app.status, ConnectionStatus::Connected(_)) {
-        return container(mixer_strips(app))
-            .padding(24)
-            .center_x(Fill)
+    let content: Element<'_, Message> = if matches!(app.status, ConnectionStatus::Connected(_)) {
+        container(mixer_strips(app))
+            .padding([24, 16])
             .height(Length::Fill)
-            .into();
-    }
+            .into()
+    } else {
+        let (label, color) = match app.status {
+            ConnectionStatus::Checking => ("checking", Color::from_rgb8(0xE0, 0xB6, 0x4A)),
+            ConnectionStatus::Connected(_) => ("connected", Color::from_rgb8(0x7D, 0xD3, 0xA7)),
+            ConnectionStatus::Disconnected => ("disconnected", Color::from_rgb8(0xF0, 0x7C, 0x82)),
+        };
 
-    let (label, color) = match app.status {
-        ConnectionStatus::Checking => ("checking", Color::from_rgb8(0xE0, 0xB6, 0x4A)),
-        ConnectionStatus::Connected(_) => ("connected", Color::from_rgb8(0x7D, 0xD3, 0xA7)),
-        ConnectionStatus::Disconnected => ("disconnected", Color::from_rgb8(0xF0, 0x7C, 0x82)),
+        let address_line = app
+            .mixer_addr
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|| "discovering on UDP broadcast".to_owned());
+
+        let identity_line = app.discovered_mixer.as_ref().map_or_else(
+            || "".to_owned(),
+            |mixer| match (&mixer.name, &mixer.model, &mixer.firmware) {
+                (Some(name), Some(model), Some(firmware)) => {
+                    format!("device: {name} ({model}, fw {firmware})")
+                }
+                (Some(name), Some(model), None) => format!("device: {name} ({model})"),
+                (Some(name), None, None) => format!("device: {name}"),
+                _ => "".to_owned(),
+            },
+        );
+
+        let response_line = match app.status {
+            ConnectionStatus::Connected(response) => format!("reply: {}", response_name(response)),
+            ConnectionStatus::Checking => "reply: waiting".to_owned(),
+            ConnectionStatus::Disconnected => "reply: none".to_owned(),
+        };
+
+        let error_line = app
+            .last_error
+            .as_deref()
+            .map_or_else(|| "".to_owned(), |error| format!("error: {error}"));
+
+        let status_panel = column![
+            text("X32 mixer status").size(28),
+            text(address_line).size(16),
+            text(label).size(44).color(color),
+            text(identity_line).size(16),
+            text(response_line).size(16),
+            text(error_line)
+                .size(14)
+                .color(Color::from_rgb8(0xC7, 0xC9, 0xD3)),
+        ]
+        .spacing(8)
+        .width(Length::FillPortion(2));
+
+        container(row![status_panel])
+            .padding([24, 16])
+            .center_x(Fill)
+            .center_y(Fill)
+            .into()
     };
 
-    let address_line = app
-        .mixer_addr
-        .map(|addr| addr.to_string())
-        .unwrap_or_else(|| "discovering on UDP broadcast".to_owned());
+    container(
+        column![
+            container(top_nav_bar())
+                .padding([0, 16])
+                .width(Length::Shrink),
+            content
+        ]
+        .spacing(0),
+    )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
 
-    let identity_line = app.discovered_mixer.as_ref().map_or_else(
-        || "".to_owned(),
-        |mixer| match (&mixer.name, &mixer.model, &mixer.firmware) {
-            (Some(name), Some(model), Some(firmware)) => {
-                format!("device: {name} ({model}, fw {firmware})")
-            }
-            (Some(name), Some(model), None) => format!("device: {name} ({model})"),
-            (Some(name), None, None) => format!("device: {name}"),
-            _ => "".to_owned(),
+#[derive(Clone, Copy)]
+struct NavTab {
+    icon: fn() -> iced::widget::Text<'static, Theme>,
+    label: &'static str,
+    selected: bool,
+}
+
+fn top_nav_bar() -> Element<'static, Message> {
+    const TABS: [NavTab; 9] = [
+        NavTab {
+            icon: sliders_vertical,
+            label: "Mixer",
+            selected: true,
         },
+        NavTab {
+            icon: panel_left,
+            label: "Channel",
+            selected: false,
+        },
+        NavTab {
+            icon: file_input,
+            label: "Config",
+            selected: false,
+        },
+        NavTab {
+            icon: toggle_left,
+            label: "Gate",
+            selected: false,
+        },
+        NavTab {
+            icon: audio_waveform,
+            label: "Dyn",
+            selected: false,
+        },
+        NavTab {
+            icon: equal,
+            label: "EQ",
+            selected: false,
+        },
+        NavTab {
+            icon: send,
+            label: "Sends",
+            selected: false,
+        },
+        NavTab {
+            icon: audio_lines,
+            label: "Main",
+            selected: false,
+        },
+        NavTab {
+            icon: shield,
+            label: "FX1 - 8",
+            selected: false,
+        },
+    ];
+
+    let tabs = TABS.into_iter().fold(
+        row!().spacing(4).padding([3, 3]).align_y(iced::Alignment::Center),
+        |row, tab| row.push(nav_button(tab)),
     );
 
-    let response_line = match app.status {
-        ConnectionStatus::Connected(response) => format!("reply: {}", response_name(response)),
-        ConnectionStatus::Checking => "reply: waiting".to_owned(),
-        ConnectionStatus::Disconnected => "reply: none".to_owned(),
-    };
-
-    let error_line = app
-        .last_error
-        .as_deref()
-        .map_or_else(|| "".to_owned(), |error| format!("error: {error}"));
-
-    let status_panel = column![
-        text("X32 mixer status").size(28),
-        text(address_line).size(16),
-        text(label).size(44).color(color),
-        text(identity_line).size(16),
-        text(response_line).size(16),
-        text(error_line)
-            .size(14)
-            .color(Color::from_rgb8(0xC7, 0xC9, 0xD3)),
-    ]
-    .spacing(8)
-    .width(Length::FillPortion(2));
-
-    let content = row![status_panel];
-
-    container(content)
-        .padding(24)
-        .center_x(Fill)
-        .center_y(Fill)
+    container(tabs)
+        .height(Length::Shrink)
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x1C, 0x1C, 0x1C))),
+            border: Border {
+                color: Color::from_rgb8(0x2A, 0x2A, 0x2A),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
         .into()
+}
+
+fn nav_button(tab: NavTab) -> Element<'static, Message> {
+    let accent = Color::from_rgb8(0x29, 0xE6, 0xF2);
+    let active_text = accent;
+    let inactive_text = Color::from_rgb8(0xA9, 0xAC, 0xB3);
+    let selected = tab.selected;
+
+    let icon = container(
+        (tab.icon)()
+            .size(17)
+            .color(if selected { active_text } else { inactive_text }),
+    )
+    .width(Length::Fixed(24.0))
+    .height(Length::Fixed(24.0))
+    .padding(0)
+    .center_x(Fill)
+    .center_y(Fill)
+    .style(move |_theme: &Theme| container::Style {
+        border: Border {
+            color: if selected {
+                accent
+            } else {
+                Color::from_rgb8(0x6B, 0x6F, 0x76)
+            },
+            width: 1.0,
+            radius: 2.0.into(),
+        },
+        ..Default::default()
+    });
+
+    button(
+        row![
+            icon,
+            text(tab.label)
+                .size(14)
+                .color(if selected { active_text } else { inactive_text }),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+    )
+    .padding([4, 10])
+    .width(Length::Fixed(108.0))
+    .height(Length::Fixed(36.0))
+    .style(move |_theme: &Theme, _status| button::Style {
+        background: Some(Background::Color(if selected {
+            Color::from_rgb8(0x2A, 0x2A, 0x2A)
+        } else {
+            Color::from_rgb8(0x24, 0x24, 0x24)
+        })),
+        border: Border {
+            color: if selected {
+                Color::from_rgb8(0x4B, 0x4B, 0x4B)
+            } else {
+                Color::from_rgb8(0x3A, 0x3A, 0x3A)
+            },
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        text_color: if selected { active_text } else { inactive_text },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn spawn_probe(mixer_addr: SocketAddr) -> Task<Message> {
@@ -1152,7 +1329,9 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
         .fold(
             row!().spacing(0).align_y(iced::Alignment::End),
             |strips, (index, value)| {
-                let gain_value = app.gains[index].unwrap_or(0.0);
+                let gain_value = app.gain_drag_values[index]
+                    .or(app.gains[index])
+                    .unwrap_or(0.0);
                 let gain_source = app.gain_sources[index];
                 let fader_value = value.unwrap_or(0.0);
                 let pan_value = app.pans[index].unwrap_or(0.5);
@@ -1235,6 +1414,7 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                         .handle_color(Color::from_rgb8(0xF3, 0xB3, 0x6A))
                         .step(gain_step(gain_source))
                         .double_click_reset(0.0)
+                        .on_release(Message::GainReleased(index))
                         .width(Length::Fixed(72.0))
                         .height(Length::Fixed(10.0)),
                     ]
@@ -1633,7 +1813,6 @@ fn state_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<ConsoleUpd
                     Err(_) => {}
                 }
 
-                sleep(Duration::from_millis(10)).await;
             }
         },
     )
