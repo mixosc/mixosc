@@ -444,6 +444,10 @@ impl GainBankProbe {
         source: GainSource,
         value: f32,
     ) -> Result<(), ProbeError> {
+        if matches!(target, FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
+            return Ok(());
+        }
+
         let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
         socket
             .set_write_timeout(Some(self.timeout))
@@ -462,6 +466,14 @@ impl GainBankProbe {
     }
 
     fn read_gain(&self, socket: &UdpSocket, target: FaderTarget) -> Result<StripGain, ProbeError> {
+        if matches!(target, FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
+            return Ok(StripGain {
+                target,
+                value: 0.0,
+                source: GainSource::Trim,
+            });
+        }
+
         if let Some(index) = self.read_headamp_index(socket, target)? {
             let path = headamp_gain_path(index);
             let request = osc_query(&path);
@@ -557,6 +569,10 @@ impl GainBankProbe {
 pub enum FaderTarget {
     Channel(u8),
     Aux(u8),
+    Bus(u8),
+    FxRtn(u8),
+    Mtx(u8),
+    Dca(u8),
     Main,
 }
 
@@ -565,6 +581,10 @@ impl std::fmt::Display for FaderTarget {
         match self {
             Self::Channel(channel) => write!(f, "channel {channel:02}"),
             Self::Aux(aux) => write!(f, "aux {aux:02}"),
+            Self::Bus(bus) => write!(f, "bus {bus:02}"),
+            Self::FxRtn(fx) => write!(f, "fxrtn {fx:02}"),
+            Self::Mtx(mtx) => write!(f, "mtx {mtx:02}"),
+            Self::Dca(dca) => write!(f, "dca {dca}"),
             Self::Main => write!(f, "main lr"),
         }
     }
@@ -1039,6 +1059,10 @@ fn fader_path(target: FaderTarget) -> String {
     match target {
         FaderTarget::Channel(channel) => format!("/ch/{channel:02}/mix/fader"),
         FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/mix/fader"),
+        FaderTarget::Bus(bus) => format!("/bus/{bus:02}/mix/fader"),
+        FaderTarget::FxRtn(fx) => format!("/fxrtn/{fx:02}/mix/fader"),
+        FaderTarget::Mtx(mtx) => format!("/mtx/{mtx:02}/mix/fader"),
+        FaderTarget::Dca(dca) => format!("/dca/{dca}/fader"),
         FaderTarget::Main => "/main/st/mix/fader".to_owned(),
     }
 }
@@ -1047,6 +1071,10 @@ fn pan_path(target: FaderTarget) -> String {
     match target {
         FaderTarget::Channel(channel) => format!("/ch/{channel:02}/mix/pan"),
         FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/mix/pan"),
+        FaderTarget::Bus(bus) => format!("/bus/{bus:02}/mix/pan"),
+        FaderTarget::FxRtn(fx) => format!("/fxrtn/{fx:02}/mix/pan"),
+        FaderTarget::Mtx(mtx) => format!("/mtx/{mtx:02}/mix/pan"),
+        FaderTarget::Dca(_) => String::new(),
         FaderTarget::Main => "/main/st/mix/pan".to_owned(),
     }
 }
@@ -1055,6 +1083,9 @@ fn gain_path(target: FaderTarget) -> String {
     match target {
         FaderTarget::Channel(channel) => format!("/ch/{channel:02}/preamp/trim"),
         FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/preamp/trim"),
+        FaderTarget::Bus(_) => "/bus/01/preamp/trim".to_owned(),
+        FaderTarget::FxRtn(_) => "/fxrtn/01/preamp/trim".to_owned(),
+        FaderTarget::Mtx(_) | FaderTarget::Dca(_) => String::new(),
         FaderTarget::Main => "/main/st/preamp/trim".to_owned(),
     }
 }
@@ -1063,6 +1094,9 @@ fn headamp_index_path(target: FaderTarget) -> String {
     let index = match target {
         FaderTarget::Channel(channel) => channel - 1,
         FaderTarget::Aux(aux) => 31 + aux,
+        FaderTarget::Bus(_) => 255,
+        FaderTarget::FxRtn(_) => 255,
+        FaderTarget::Mtx(_) | FaderTarget::Dca(_) => 255,
         FaderTarget::Main => 255,
     };
     format!("/-ha/{index:02}/index")
@@ -1082,6 +1116,9 @@ fn send_level_path(target: FaderTarget, bus: u8) -> String {
     match target {
         FaderTarget::Channel(channel) => format!("/ch/{channel:02}/mix/{bus:02}/level"),
         FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/mix/{bus:02}/level"),
+        FaderTarget::Bus(bus_target) => format!("/bus/{bus_target:02}/mix/{bus:02}/level"),
+        FaderTarget::FxRtn(fx) => format!("/fxrtn/{fx:02}/mix/{bus:02}/level"),
+        FaderTarget::Mtx(_) | FaderTarget::Dca(_) => String::new(),
         FaderTarget::Main => format!("/main/st/mix/{bus:02}/level"),
     }
 }
@@ -1090,6 +1127,10 @@ fn mute_path(target: FaderTarget) -> String {
     match target {
         FaderTarget::Channel(channel) => format!("/ch/{channel:02}/mix/on"),
         FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/mix/on"),
+        FaderTarget::Bus(bus) => format!("/bus/{bus:02}/mix/on"),
+        FaderTarget::FxRtn(fx) => format!("/fxrtn/{fx:02}/mix/on"),
+        FaderTarget::Mtx(mtx) => format!("/mtx/{mtx:02}/mix/on"),
+        FaderTarget::Dca(dca) => format!("/dca/{dca}/on"),
         FaderTarget::Main => "/main/st/mix/on".to_owned(),
     }
 }
@@ -1098,7 +1139,9 @@ fn solo_path(target: FaderTarget) -> String {
     let id = match target {
         FaderTarget::Channel(channel) => channel,
         FaderTarget::Aux(aux) => 32 + aux,
-        FaderTarget::Main => 0,
+        FaderTarget::FxRtn(fx) => 40 + fx,
+        FaderTarget::Bus(bus) => 48 + bus,
+        FaderTarget::Mtx(_) | FaderTarget::Dca(_) | FaderTarget::Main => 0,
     };
     format!("/-stat/solosw/{id:02}")
 }
@@ -1107,6 +1150,10 @@ fn name_path(target: FaderTarget) -> String {
     match target {
         FaderTarget::Channel(channel) => format!("/ch/{channel:02}/config/name"),
         FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/config/name"),
+        FaderTarget::Bus(bus) => format!("/bus/{bus:02}/config/name"),
+        FaderTarget::FxRtn(fx) => format!("/fxrtn/{fx:02}/config/name"),
+        FaderTarget::Mtx(mtx) => format!("/mtx/{mtx:02}/config/name"),
+        FaderTarget::Dca(dca) => format!("/dca/{dca}/config/name"),
         FaderTarget::Main => "/main/st/config/name".to_owned(),
     }
 }
@@ -1243,6 +1290,47 @@ fn target_from_channel_path(path: &str, suffix: &str) -> Option<FaderTarget> {
         return index.parse::<u8>().ok().map(FaderTarget::Aux);
     }
 
+    if let Some(index) = path
+        .strip_prefix("/bus/")
+        .and_then(|rest| rest.strip_suffix(suffix))
+    {
+        return index.parse::<u8>().ok().map(FaderTarget::Bus);
+    }
+
+    if let Some(index) = path
+        .strip_prefix("/fxrtn/")
+        .and_then(|rest| rest.strip_suffix(suffix))
+    {
+        return index.parse::<u8>().ok().map(FaderTarget::FxRtn);
+    }
+
+    if let Some(index) = path
+        .strip_prefix("/mtx/")
+        .and_then(|rest| rest.strip_suffix(suffix))
+    {
+        return index.parse::<u8>().ok().map(FaderTarget::Mtx);
+    }
+
+    // DCA paths have a different structure without /mix/ prefix
+    if suffix == FADER_RESPONSE_SUFFIX {
+        if let Some(index) = path.strip_prefix("/dca/").and_then(|rest| rest.strip_suffix("/fader")) {
+            return index.parse::<u8>().ok().map(FaderTarget::Dca);
+        }
+    }
+    if suffix == MUTE_RESPONSE_SUFFIX {
+        if let Some(index) = path.strip_prefix("/dca/").and_then(|rest| rest.strip_suffix("/mix/on")) {
+            return index.parse::<u8>().ok().map(FaderTarget::Dca);
+        }
+        if let Some(index) = path.strip_prefix("/dca/").and_then(|rest| rest.strip_suffix("/on")) {
+            return index.parse::<u8>().ok().map(FaderTarget::Dca);
+        }
+    }
+    if suffix == NAME_RESPONSE_SUFFIX {
+        if let Some(index) = path.strip_prefix("/dca/").and_then(|rest| rest.strip_suffix("/config/name")) {
+            return index.parse::<u8>().ok().map(FaderTarget::Dca);
+        }
+    }
+
     if path == format!("/main/st{suffix}") {
         return Some(FaderTarget::Main);
     }
@@ -1255,6 +1343,8 @@ fn target_from_solo_path(path: &str) -> Option<FaderTarget> {
     match id {
         1..=32 => Some(FaderTarget::Channel(id)),
         33..=40 => Some(FaderTarget::Aux(id - 32)),
+        41..=48 => Some(FaderTarget::FxRtn(id - 40)),
+        49..=64 => Some(FaderTarget::Bus(id - 48)),
         _ => None,
     }
 }
@@ -1266,6 +1356,12 @@ fn target_and_bus_from_send_path(path: &str) -> Option<(FaderTarget, u8)> {
     } else if let Some(rest) = path.strip_prefix("/auxin/") {
         let (aux, rest) = rest.split_once('/')?;
         (FaderTarget::Aux(aux.parse::<u8>().ok()?), rest)
+    } else if let Some(rest) = path.strip_prefix("/bus/") {
+        let (bus, rest) = rest.split_once('/')?;
+        (FaderTarget::Bus(bus.parse::<u8>().ok()?), rest)
+    } else if let Some(rest) = path.strip_prefix("/fxrtn/") {
+        let (fx, rest) = rest.split_once('/')?;
+        (FaderTarget::FxRtn(fx.parse::<u8>().ok()?), rest)
     } else {
         return None;
     };
@@ -1285,7 +1381,14 @@ fn target_and_bus_from_send_path(path: &str) -> Option<(FaderTarget, u8)> {
 }
 
 fn parse_fader_value(packet: &[u8]) -> Option<(String, f32)> {
-    parse_float_value(packet, FADER_RESPONSE_SUFFIX)
+    if let Some(result) = parse_float_value(packet, FADER_RESPONSE_SUFFIX) {
+        return Some(result);
+    }
+    let (path, value) = parse_float_value(packet, "/fader")?;
+    if !path.starts_with("/dca/") {
+        return None;
+    }
+    Some((path, value))
 }
 
 fn parse_pan_value(packet: &[u8]) -> Option<(String, f32)> {
@@ -1382,7 +1485,10 @@ fn quantize_gain_step(value: f32, min: f32, step: f32) -> f32 {
 
 fn parse_switch_value(packet: &[u8]) -> Option<(String, bool)> {
     let path = osc_address(packet)?;
-    if !path.ends_with(MUTE_RESPONSE_SUFFIX) && !path.starts_with(SOLO_RESPONSE_PREFIX) {
+    if !path.ends_with(MUTE_RESPONSE_SUFFIX)
+        && !path.starts_with(SOLO_RESPONSE_PREFIX)
+        && !is_dca_mute_path(&path)
+    {
         return None;
     }
 
@@ -1392,12 +1498,24 @@ fn parse_switch_value(packet: &[u8]) -> Option<(String, bool)> {
     let type_tag_len = osc_padded_len(packet.get(offset..)?)?;
     offset += type_tag_len;
 
-    if type_tag != ",i" {
-        return None;
+    match type_tag {
+        ",i" => {
+            let value_bytes: [u8; 4] = packet.get(offset..offset + 4)?.try_into().ok()?;
+            Some((path.to_owned(), i32::from_be_bytes(value_bytes) != 0))
+        }
+        ",f" => {
+            let value_bytes: [u8; 4] = packet.get(offset..offset + 4)?.try_into().ok()?;
+            Some((path.to_owned(), f32::from_be_bytes(value_bytes) != 0.0))
+        }
+        _ => None,
     }
+}
 
-    let value_bytes: [u8; 4] = packet.get(offset..offset + 4)?.try_into().ok()?;
-    Some((path.to_owned(), i32::from_be_bytes(value_bytes) != 0))
+fn is_dca_mute_path(path: &str) -> bool {
+    path.strip_prefix("/dca/")
+        .and_then(|rest| rest.strip_suffix("/mix/on").or_else(|| rest.strip_suffix("/on")))
+        .and_then(|index| index.parse::<u8>().ok())
+        .is_some()
 }
 
 fn parse_string_value(packet: &[u8]) -> Option<(String, String)> {
@@ -1425,12 +1543,14 @@ fn parse_string_value(packet: &[u8]) -> Option<(String, String)> {
 pub fn parse_input_meter_packet(packet: &[u8]) -> Result<Vec<StripMeter>, ProbeError> {
     let floats = parse_meter_blob(packet, INPUT_METERS_REQUEST, INPUT_METERS_ALIAS)?;
 
-    let mut strips = Vec::with_capacity(40);
-    for index in 0..40 {
+    let mut strips = Vec::with_capacity(48);
+    for index in 0..48 {
         let target = if index < 32 {
             FaderTarget::Channel((index + 1) as u8)
-        } else {
+        } else if index < 40 {
             FaderTarget::Aux((index - 31) as u8)
+        } else {
+            FaderTarget::FxRtn((index - 39) as u8)
         };
         let start = index * 4;
         let bytes: [u8; 4] = floats[start..start + 4]
@@ -1444,7 +1564,13 @@ pub fn parse_input_meter_packet(packet: &[u8]) -> Result<Vec<StripMeter>, ProbeE
     Ok(strips)
 }
 
-pub fn parse_main_meter_packet(packet: &[u8]) -> Result<[f32; 2], ProbeError> {
+#[derive(Debug, Clone, Copy)]
+pub struct MainMeterLevels {
+    pub main_lr: [f32; 2],
+    pub matrices: [f32; 6],
+}
+
+pub fn parse_main_meter_packet(packet: &[u8]) -> Result<MainMeterLevels, ProbeError> {
     let floats = parse_meter_blob(packet, MAIN_METERS_REQUEST, MAIN_METERS_ALIAS)?;
     if floats.len() < 24 * 4 {
         return Err(ProbeError::Protocol(
@@ -1452,14 +1578,24 @@ pub fn parse_main_meter_packet(packet: &[u8]) -> Result<[f32; 2], ProbeError> {
         ));
     }
 
-    Ok([
-        f32::from_le_bytes(floats[22 * 4..22 * 4 + 4].try_into().map_err(|_| {
-            ProbeError::Protocol("main L meter float slice size mismatch".to_owned())
-        })?),
-        f32::from_le_bytes(floats[23 * 4..23 * 4 + 4].try_into().map_err(|_| {
-            ProbeError::Protocol("main R meter float slice size mismatch".to_owned())
-        })?),
-    ])
+    let mut matrices = [0.0f32; 6];
+    for i in 0..6 {
+        matrices[i] = f32::from_le_bytes(floats[(16 + i) * 4..(16 + i) * 4 + 4].try_into().map_err(|_| {
+            ProbeError::Protocol(format!("matrix meter {i} float slice size mismatch"))
+        })?);
+    }
+
+    Ok(MainMeterLevels {
+        main_lr: [
+            f32::from_le_bytes(floats[22 * 4..22 * 4 + 4].try_into().map_err(|_| {
+                ProbeError::Protocol("main L meter float slice size mismatch".to_owned())
+            })?),
+            f32::from_le_bytes(floats[23 * 4..23 * 4 + 4].try_into().map_err(|_| {
+                ProbeError::Protocol("main R meter float slice size mismatch".to_owned())
+            })?),
+        ],
+        matrices,
+    })
 }
 
 fn parse_meter_blob<'a>(
@@ -1727,11 +1863,13 @@ mod tests {
         packet.extend_from_slice(&blob);
 
         let meters = parse_input_meter_packet(&packet).expect("should parse input meter blob");
-        assert_eq!(meters.len(), 40);
+        assert_eq!(meters.len(), 48);
         assert_eq!(meters[0].target, FaderTarget::Channel(1));
         assert_eq!(meters[31].target, FaderTarget::Channel(32));
         assert_eq!(meters[32].target, FaderTarget::Aux(1));
         assert_eq!(meters[39].target, FaderTarget::Aux(8));
+        assert_eq!(meters[40].target, FaderTarget::FxRtn(1));
+        assert_eq!(meters[47].target, FaderTarget::FxRtn(8));
         assert!((meters[5].level_linear - 0.5).abs() < f32::EPSILON);
         assert!((meters[35].level_linear - 3.5).abs() < f32::EPSILON);
     }
@@ -1747,5 +1885,159 @@ mod tests {
     fn builds_renew_request_packet() {
         let packet = renew_request("meters/0");
         assert_eq!(&packet[..8], b"/renew\0\0");
+    }
+
+    #[test]
+    fn builds_query_packet_for_bus_fader() {
+        assert_eq!(
+            osc_query(&fader_path(FaderTarget::Bus(1))),
+            b"/bus/01/mix/fader\0\0\0".to_vec()
+        );
+    }
+
+    #[test]
+    fn parses_bus_fader_reply() {
+        let packet = [
+            osc_string("/bus/05/mix/fader").as_slice(),
+            b",f\0\0".as_slice(),
+            0.75_f32.to_bits().to_be_bytes().as_slice(),
+        ]
+        .concat();
+
+        let (path, value) = parse_fader_value(&packet).expect("should parse bus fader reply");
+        assert_eq!(path, "/bus/05/mix/fader");
+        assert!((value - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parses_bus_pan_reply() {
+        let packet = [
+            osc_string("/bus/03/mix/pan").as_slice(),
+            b",f\0\0".as_slice(),
+            0.25_f32.to_bits().to_be_bytes().as_slice(),
+        ]
+        .concat();
+
+        let (path, value) = parse_pan_value(&packet).expect("should parse bus pan reply");
+        assert_eq!(path, "/bus/03/mix/pan");
+        assert!((value - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parses_bus_send_reply() {
+        let packet = [
+            osc_string("/bus/02/mix/06/level").as_slice(),
+            b",f\0\0".as_slice(),
+            0.5_f32.to_bits().to_be_bytes().as_slice(),
+        ]
+        .concat();
+
+        let (path, value) = parse_send_value(&packet).expect("should parse bus send reply");
+        assert_eq!(path, "/bus/02/mix/06/level");
+        assert!((value - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parses_bus_mute_reply() {
+        let packet = osc_int_message("/bus/07/mix/on", 0);
+
+        let (path, on) = parse_switch_value(&packet).expect("should parse bus mute reply");
+        assert_eq!(path, "/bus/07/mix/on");
+        assert!(!on);
+    }
+
+    #[test]
+    fn parses_bus_solo_reply() {
+        let packet = osc_int_message("/-stat/solosw/52", 1);
+
+        let (path, on) = parse_switch_value(&packet).expect("should parse bus solo reply");
+        assert_eq!(path, "/-stat/solosw/52");
+        assert!(on);
+    }
+
+    #[test]
+    fn parses_bus_name_reply() {
+        let packet = [
+            osc_string("/bus/08/config/name").as_slice(),
+            b",s\0\0".as_slice(),
+            osc_string("Drums").as_slice(),
+        ]
+        .concat();
+
+        let (path, value) = parse_string_value(&packet).expect("should parse bus name reply");
+        assert_eq!(path, "/bus/08/config/name");
+        assert_eq!(value, "Drums");
+    }
+
+    #[test]
+    fn parses_dca_mute_reply_with_on_suffix() {
+        let packet = osc_int_message("/dca/3/on", 0);
+
+        let (path, on) = parse_switch_value(&packet).expect("should parse DCA mute reply");
+        assert_eq!(path, "/dca/3/on");
+        assert!(!on);
+    }
+
+    #[test]
+    fn parses_dca_mute_reply_with_mix_on_suffix() {
+        let packet = osc_int_message("/dca/5/mix/on", 1);
+
+        let (path, on) = parse_switch_value(&packet).expect("should parse DCA /mix/on mute reply");
+        assert_eq!(path, "/dca/5/mix/on");
+        assert!(on);
+    }
+
+    #[test]
+    fn parses_dca_mute_reply_as_float() {
+        let packet = [
+            osc_string("/dca/2/on").as_slice(),
+            b",f\0\0".as_slice(),
+            1.0_f32.to_bits().to_be_bytes().as_slice(),
+        ]
+        .concat();
+
+        let (path, on) = parse_switch_value(&packet).expect("should parse DCA float mute reply");
+        assert_eq!(path, "/dca/2/on");
+        assert!(on);
+    }
+
+    #[test]
+    fn parses_fxrtn_mute_reply_as_float() {
+        let packet = [
+            osc_string("/fxrtn/03/mix/on").as_slice(),
+            b",f\0\0".as_slice(),
+            0.0_f32.to_bits().to_be_bytes().as_slice(),
+        ]
+        .concat();
+
+        let (path, on) = parse_switch_value(&packet).expect("should parse FX return float mute reply");
+        assert_eq!(path, "/fxrtn/03/mix/on");
+        assert!(!on);
+    }
+
+    #[test]
+    fn parses_dca_mute_console_update() {
+        let packet = osc_int_message("/dca/4/on", 1);
+        let update = parse_console_update(&packet).expect("should parse DCA mute update");
+        assert_eq!(
+            update,
+            ConsoleUpdate::Mute(StripMute {
+                target: FaderTarget::Dca(4),
+                on: true,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_dca_mix_on_mute_console_update() {
+        let packet = osc_int_message("/dca/6/mix/on", 0);
+        let update = parse_console_update(&packet).expect("should parse DCA /mix/on mute update");
+        assert_eq!(
+            update,
+            ConsoleUpdate::Mute(StripMute {
+                target: FaderTarget::Dca(6),
+                on: false,
+            })
+        );
     }
 }

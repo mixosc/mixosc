@@ -9,11 +9,11 @@ use maolan_widgets::slider::slider as vertical_slider;
 use maolan_widgets::ticks::meter_ticks;
 use mixosc::{
     ConnectionProbe, ConsoleUpdate, DiscoveredMixer, DiscoveryProbe, FaderBankProbe, FaderTarget,
-    GainBankProbe, GainSource, MuteBankProbe, NameBankProbe, PanBankProbe, ProbeOutcome,
-    ProbeResponse, SendBankProbe, SoloBankProbe, StripFader, StripGain, StripMeter, StripMute,
-    StripName, StripPan, StripSend, StripSolo, XREMOTE_REQUEST, batchsubscribe_meter_request,
-    parse_console_update, parse_input_meter_packet, parse_main_meter_packet, parse_target,
-    renew_request,
+    GainBankProbe, GainSource, MainMeterLevels, MuteBankProbe, NameBankProbe, PanBankProbe,
+    ProbeOutcome, ProbeResponse, SendBankProbe, SoloBankProbe, StripFader, StripGain, StripMeter,
+    StripMute, StripName, StripPan, StripSend, StripSolo, XREMOTE_REQUEST,
+    batchsubscribe_meter_request, parse_console_update, parse_input_meter_packet,
+    parse_main_meter_packet, parse_target, renew_request,
 };
 use std::env;
 use std::net::SocketAddr;
@@ -21,10 +21,11 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::{Instant, sleep};
 
-const STRIP_COUNT: usize = 40;
+const STRIP_COUNT: usize = 74;
 const SEND_BUS_COUNT: usize = 16;
 const STRIP_METER_HEIGHT: f32 = 260.0;
 const SEND_BUSES: [u8; SEND_BUS_COUNT] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+const MATRIX_SENDS: [u8; 6] = [1, 2, 3, 4, 5, 6];
 const VISIBLE_STRIPS: [FaderTarget; STRIP_COUNT] = [
     FaderTarget::Channel(1),
     FaderTarget::Channel(2),
@@ -66,6 +67,40 @@ const VISIBLE_STRIPS: [FaderTarget; STRIP_COUNT] = [
     FaderTarget::Aux(6),
     FaderTarget::Aux(7),
     FaderTarget::Aux(8),
+    FaderTarget::Bus(1),
+    FaderTarget::Bus(2),
+    FaderTarget::Bus(3),
+    FaderTarget::Bus(4),
+    FaderTarget::Bus(5),
+    FaderTarget::Bus(6),
+    FaderTarget::Bus(7),
+    FaderTarget::Bus(8),
+    FaderTarget::Bus(9),
+    FaderTarget::Bus(10),
+    FaderTarget::Bus(11),
+    FaderTarget::Bus(12),
+    FaderTarget::FxRtn(1),
+    FaderTarget::FxRtn(2),
+    FaderTarget::FxRtn(3),
+    FaderTarget::FxRtn(4),
+    FaderTarget::FxRtn(5),
+    FaderTarget::FxRtn(6),
+    FaderTarget::FxRtn(7),
+    FaderTarget::FxRtn(8),
+    FaderTarget::Mtx(1),
+    FaderTarget::Mtx(2),
+    FaderTarget::Mtx(3),
+    FaderTarget::Mtx(4),
+    FaderTarget::Mtx(5),
+    FaderTarget::Mtx(6),
+    FaderTarget::Dca(1),
+    FaderTarget::Dca(2),
+    FaderTarget::Dca(3),
+    FaderTarget::Dca(4),
+    FaderTarget::Dca(5),
+    FaderTarget::Dca(6),
+    FaderTarget::Dca(7),
+    FaderTarget::Dca(8),
 ];
 
 fn main() -> iced::Result {
@@ -94,6 +129,7 @@ struct StatusApp {
     soloed: [Option<bool>; STRIP_COUNT],
     master_fader: Option<f32>,
     master_muted: Option<bool>,
+    master_soloed: Option<bool>,
     status: ConnectionStatus,
     last_error: Option<String>,
 }
@@ -124,9 +160,10 @@ enum Message {
     PanSetFinished(Result<(), String>),
     FaderSetFinished(Result<(), String>),
     MetersLoaded(Result<Vec<StripMeter>, String>),
-    MasterMetersLoaded(Result<[f32; 2], String>),
+    MasterMetersLoaded(Result<MainMeterLevels, String>),
     MutePressed(usize),
     MasterMutePressed,
+    MasterSoloPressed,
     MutesLoaded(Result<Vec<StripMute>, String>),
     MuteSetFinished(Result<(), String>),
     SoloPressed(usize),
@@ -155,6 +192,7 @@ fn new() -> (StatusApp, Task<Message>) {
         soloed: [None; STRIP_COUNT],
         master_fader: None,
         master_muted: None,
+        master_soloed: None,
         status: ConnectionStatus::Checking,
         last_error: None,
     };
@@ -469,9 +507,16 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
             match result {
                 Ok(levels) => {
                     app.master_meters_db = [
-                        linear_meter_to_db(levels[0]),
-                        linear_meter_to_db(levels[1]),
+                        linear_meter_to_db(levels.main_lr[0]),
+                        linear_meter_to_db(levels.main_lr[1]),
                     ];
+                    for (matrix_index, level) in levels.matrices.iter().enumerate() {
+                        if let Some(strip_index) = VISIBLE_STRIPS.iter().position(|target| {
+                            *target == FaderTarget::Mtx((matrix_index + 1) as u8)
+                        }) {
+                            app.meters_db[strip_index] = linear_meter_to_db(*level);
+                        }
+                    }
                 }
                 Err(error) => app.last_error = Some(error),
             }
@@ -527,15 +572,23 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::SoloPressed(index) => {
-            let Some(mixer_addr) = app.mixer_addr else {
-                return Task::none();
-            };
             let target = VISIBLE_STRIPS[index];
             let next_on = !app.soloed.get(index).and_then(|state| *state).unwrap_or(false);
             if let Some(soloed) = app.soloed.get_mut(index) {
                 *soloed = Some(next_on);
             }
+            if matches!(target, FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
+                return Task::none();
+            }
+            let Some(mixer_addr) = app.mixer_addr else {
+                return Task::none();
+            };
             spawn_set_solo(mixer_addr, target, next_on)
+        }
+        Message::MasterSoloPressed => {
+            let next_on = !app.master_soloed.unwrap_or(false);
+            app.master_soloed = Some(next_on);
+            Task::none()
         }
         Message::SolosLoaded(result) => {
             match result {
@@ -586,6 +639,7 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
                         app.soloed = [None; STRIP_COUNT];
                         app.master_fader = None;
                         app.master_muted = None;
+                        app.master_soloed = None;
                         app.status = ConnectionStatus::Disconnected;
                         app.last_error =
                             Some("no X32 mixer discovered on the local network".to_owned());
@@ -607,6 +661,7 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
                     app.soloed = [None; STRIP_COUNT];
                     app.master_fader = None;
                     app.master_muted = None;
+                    app.master_soloed = None;
                     app.status = ConnectionStatus::Disconnected;
                     app.last_error = Some(error);
                     Task::none()
@@ -649,6 +704,7 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
                     app.soloed = [None; STRIP_COUNT];
                     app.master_fader = None;
                     app.master_muted = None;
+                    app.master_soloed = None;
                     if !app.manual_target {
                         app.mixer_addr = None;
                         app.discovered_mixer = None;
@@ -669,6 +725,7 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
                     app.soloed = [None; STRIP_COUNT];
                     app.master_fader = None;
                     app.master_muted = None;
+                    app.master_soloed = None;
                     if !app.manual_target {
                         app.mixer_addr = None;
                         app.discovered_mixer = None;
@@ -802,11 +859,16 @@ fn spawn_load_names(mixer_addr: SocketAddr) -> Task<Message> {
 }
 
 fn spawn_load_gains(mixer_addr: SocketAddr) -> Task<Message> {
+    let targets: Vec<FaderTarget> = VISIBLE_STRIPS
+        .iter()
+        .filter(|t| !matches!(t, FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)))
+        .cloned()
+        .collect();
     Task::perform(
         async move {
             GainBankProbe::new(mixer_addr)
                 .with_timeout(Duration::from_millis(250))
-                .load(&VISIBLE_STRIPS)
+                .load(&targets)
                 .map_err(|error| error.to_string())
         },
         Message::GainsLoaded,
@@ -814,23 +876,49 @@ fn spawn_load_gains(mixer_addr: SocketAddr) -> Task<Message> {
 }
 
 fn spawn_load_sends(mixer_addr: SocketAddr) -> Task<Message> {
-    Task::perform(
-        async move {
-            SendBankProbe::new(mixer_addr)
-                .with_timeout(Duration::from_millis(250))
-                .load(&VISIBLE_STRIPS, &SEND_BUSES)
-                .map_err(|error| error.to_string())
-        },
-        Message::SendsLoaded,
-    )
+    let channel_aux_targets: Vec<FaderTarget> = VISIBLE_STRIPS
+        .iter()
+        .filter(|t| matches!(t, FaderTarget::Channel(_) | FaderTarget::Aux(_) | FaderTarget::FxRtn(_)))
+        .cloned()
+        .collect();
+    let bus_targets: Vec<FaderTarget> = VISIBLE_STRIPS
+        .iter()
+        .filter(|t| matches!(t, FaderTarget::Bus(_)))
+        .cloned()
+        .collect();
+    Task::batch([
+        Task::perform(
+            async move {
+                SendBankProbe::new(mixer_addr)
+                    .with_timeout(Duration::from_millis(250))
+                    .load(&channel_aux_targets, &SEND_BUSES)
+                    .map_err(|error| error.to_string())
+            },
+            Message::SendsLoaded,
+        ),
+        Task::perform(
+            async move {
+                SendBankProbe::new(mixer_addr)
+                    .with_timeout(Duration::from_millis(250))
+                    .load(&bus_targets, &MATRIX_SENDS)
+                    .map_err(|error| error.to_string())
+            },
+            Message::SendsLoaded,
+        ),
+    ])
 }
 
 fn spawn_load_pans(mixer_addr: SocketAddr) -> Task<Message> {
+    let targets: Vec<FaderTarget> = VISIBLE_STRIPS
+        .iter()
+        .filter(|t| !matches!(t, FaderTarget::Dca(_) | FaderTarget::Mtx(_)))
+        .cloned()
+        .collect();
     Task::perform(
         async move {
             PanBankProbe::new(mixer_addr)
                 .with_timeout(Duration::from_millis(250))
-                .load(&VISIBLE_STRIPS)
+                .load(&targets)
                 .map_err(|error| error.to_string())
         },
         Message::PansLoaded,
@@ -850,11 +938,16 @@ fn spawn_load_mutes(mixer_addr: SocketAddr) -> Task<Message> {
 }
 
 fn spawn_load_solos(mixer_addr: SocketAddr) -> Task<Message> {
+    let targets: Vec<FaderTarget> = VISIBLE_STRIPS
+        .iter()
+        .filter(|t| !matches!(t, FaderTarget::Mtx(_) | FaderTarget::Dca(_)))
+        .cloned()
+        .collect();
     Task::perform(
         async move {
             SoloBankProbe::new(mixer_addr)
                 .with_timeout(Duration::from_millis(250))
-                .load(&VISIBLE_STRIPS)
+                .load(&targets)
                 .map_err(|error| error.to_string())
         },
         Message::SolosLoaded,
@@ -1026,90 +1119,140 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                 )
                 .height(Length::Fill)
                 .align_y(iced::alignment::Vertical::Bottom);
-                let sends = SEND_BUSES.iter().enumerate().fold(
-                    column!().spacing(2).align_x(iced::Alignment::Center),
-                    |column, (bus_index, _bus)| {
-                        let send_value = app.sends[index][bus_index].unwrap_or(0.0);
-                        column.push(
-                            horizontal_slider(
-                                0.0..=1.0,
-                                send_value,
-                                move |next| Message::SendChanged(index, bus_index, next)
-                            )
-                            .fill_from_start()
-                            .step(0.01)
-                            .double_click_reset(0.0)
-                            .width(Length::Fixed(72.0))
-                            .height(Length::Fixed(10.0)),
+                let sends: Element<'_, Message> = match target {
+                    FaderTarget::Channel(_) | FaderTarget::Aux(_) | FaderTarget::FxRtn(_) => {
+                        SEND_BUSES.iter().enumerate().fold(
+                            column!().spacing(2).align_x(iced::Alignment::Center),
+                            |column, (bus_index, _bus)| {
+                                let send_value = app.sends[index][bus_index].unwrap_or(0.0);
+                                column.push(
+                                    horizontal_slider(
+                                        0.0..=1.0,
+                                        send_value,
+                                        move |next| Message::SendChanged(index, bus_index, next)
+                                    )
+                                    .fill_from_start()
+                                    .step(0.01)
+                                    .double_click_reset(0.0)
+                                    .width(Length::Fixed(72.0))
+                                    .height(Length::Fixed(10.0)),
+                                )
+                            },
                         )
-                    },
-                );
-
-                strips.push(
+                        .into()
+                    }
+                    FaderTarget::Bus(_) | FaderTarget::Main => {
+                        MATRIX_SENDS.iter().enumerate().fold(
+                            column!().spacing(2).align_x(iced::Alignment::Center),
+                            |column, (bus_index, _bus)| {
+                                let send_value = app.sends[index][bus_index].unwrap_or(0.0);
+                                column.push(
+                                    horizontal_slider(
+                                        0.0..=1.0,
+                                        send_value,
+                                        move |next| Message::SendChanged(index, bus_index, next)
+                                    )
+                                    .fill_from_start()
+                                    .step(0.01)
+                                    .double_click_reset(0.0)
+                                    .width(Length::Fixed(72.0))
+                                    .height(Length::Fixed(10.0)),
+                                )
+                            },
+                        )
+                        .into()
+                    }
+                    FaderTarget::Mtx(_) | FaderTarget::Dca(_) => Space::new().height(Length::Fixed(0.0)).into(),
+                };
+                let gain_block: Element<'_, Message> = if matches!(target, FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
+                    Space::new().height(Length::Fixed(26.0)).into()
+                } else {
                     column![
-                        column![
-                            text(gain_label).size(12),
-                            horizontal_slider(
-                                gain_range(gain_source),
-                                gain_value,
-                                move |next| Message::GainChanged(index, next)
-                            )
-                            .fill_from_start()
-                            .filled_color(Color::from_rgb8(0xD9, 0x7A, 0x2B))
-                            .handle_color(Color::from_rgb8(0xF3, 0xB3, 0x6A))
-                            .step(gain_step(gain_source))
-                            .double_click_reset(0.0)
-                            .width(Length::Fixed(72.0))
-                            .height(Length::Fixed(10.0)),
-                        ]
-                        .spacing(4)
-                        .align_x(iced::Alignment::Center),
-                        sends,
-                        column![
-                            text(pan_label).size(12),
-                            horizontal_slider(
-                                0.0..=1.0,
-                                pan_value,
-                                move |next| Message::PanChanged(index, next)
-                            )
-                            .step(0.01)
-                            .double_click_reset(0.5)
-                            .width(Length::Fixed(72.0))
-                            .height(Length::Fixed(12.0)),
-                        ]
-                        .spacing(4)
-                        .align_x(iced::Alignment::Center),
-                        text(strip_name(app, index, target)).size(14),
-                        button(text("SOLO").size(12))
-                            .padding([6, 8])
-                            .style(move |_theme: &Theme, _status| toggle_button_style(is_soloed))
-                            .on_press(Message::SoloPressed(index)),
-                        text(value_label).size(14),
-                        row![
-                            vertical_slider(
-                                0.0..=1.0,
-                                fader_value,
-                                move |next| Message::FaderChanged(index, next)
-                            )
-                            .height(Length::Fill)
-                            .width(Length::Fixed(20.0))
-                            .double_click_reset(0.75)
-                            .step(0.01),
-                            scale,
-                            meter,
-                        ]
-                        .spacing(6)
-                        .height(Length::Fill)
-                        .align_y(iced::Alignment::End),
-                        button(text("MUTE").size(12))
-                            .padding([6, 8])
-                            .style(move |_theme: &Theme, _status| toggle_button_style(is_muted))
-                            .on_press(Message::MutePressed(index)),
-                        text(strip_label(target)).size(14),
+                        text(gain_label).size(12),
+                        horizontal_slider(
+                            gain_range(gain_source),
+                            gain_value,
+                            move |next| Message::GainChanged(index, next)
+                        )
+                        .fill_from_start()
+                        .filled_color(Color::from_rgb8(0xD9, 0x7A, 0x2B))
+                        .handle_color(Color::from_rgb8(0xF3, 0xB3, 0x6A))
+                        .step(gain_step(gain_source))
+                        .double_click_reset(0.0)
+                        .width(Length::Fixed(72.0))
+                        .height(Length::Fixed(10.0)),
                     ]
-                    .spacing(10)
-                    .align_x(iced::Alignment::Center),
-                )
+                    .spacing(4)
+                    .align_x(iced::Alignment::Center)
+                    .into()
+                };
+
+                let pan_block: Element<'_, Message> = if matches!(target, FaderTarget::Dca(_) | FaderTarget::Mtx(_)) {
+                    Space::new().height(Length::Fixed(0.0)).into()
+                } else {
+                    column![
+                        text(pan_label).size(12),
+                        horizontal_slider(
+                            0.0..=1.0,
+                            pan_value,
+                            move |next| Message::PanChanged(index, next)
+                        )
+                        .step(0.01)
+                        .double_click_reset(0.5)
+                        .width(Length::Fixed(72.0))
+                        .height(Length::Fixed(12.0)),
+                    ]
+                    .spacing(4)
+                    .align_x(iced::Alignment::Center)
+                    .into()
+                };
+
+                let solo_button: Element<'_, Message> = if matches!(target, FaderTarget::Mtx(_)) {
+                    Space::new().height(Length::Fixed(0.0)).into()
+                } else {
+                    button(text("SOLO").size(12))
+                        .padding([6, 8])
+                        .style(move |_theme: &Theme, _status| toggle_button_style(is_soloed, Color::from_rgb8(0xF0, 0xC0, 0x30)))
+                        .on_press(Message::SoloPressed(index))
+                        .into()
+                };
+
+                let mut strip = column![gain_block].spacing(10).align_x(iced::Alignment::Center);
+                if !matches!(target, FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
+                    strip = strip.push(sends);
+                }
+                strip = strip.push(pan_block);
+                strip = strip.push(text(strip_name(app, index, target)).size(14));
+                if !matches!(target, FaderTarget::Mtx(_)) {
+                    strip = strip.push(solo_button);
+                }
+                strip = strip.push(text(value_label).size(14));
+                strip = strip.push(
+                    row![
+                        vertical_slider(
+                            0.0..=1.0,
+                            fader_value,
+                            move |next| Message::FaderChanged(index, next)
+                        )
+                        .height(Length::Fill)
+                        .width(Length::Fixed(20.0))
+                        .double_click_reset(0.75)
+                        .step(0.01),
+                        scale,
+                        meter,
+                    ]
+                    .spacing(6)
+                    .height(Length::Fill)
+                    .align_y(iced::Alignment::End),
+                );
+                strip = strip.push(
+                    button(text("MUTE").size(12))
+                        .padding([6, 8])
+                        .style(move |_theme: &Theme, _status| toggle_button_style(is_muted, Color::from_rgb8(0xE0, 0x50, 0x50)))
+                        .on_press(Message::MutePressed(index)),
+                );
+                strip = strip.push(text(strip_label(target)).size(14));
+                strips.push(strip)
             },
         );
 
@@ -1120,6 +1263,7 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
             .map(format_fader_label)
             .unwrap_or_else(|| "--".to_owned());
         let is_muted = app.master_muted.unwrap_or(false);
+        let is_soloed = app.master_soloed.unwrap_or(false);
         let meter = container(
             meters(2, &app.master_meters_db, STRIP_METER_HEIGHT)
                 .map(|()| unreachable!("meter widget does not emit messages")),
@@ -1133,11 +1277,13 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
         .align_y(iced::alignment::Vertical::Bottom);
 
         column![
-            Space::new().height(Length::Fixed(248.0)),
-            Space::new().height(Length::Fixed(16.0)),
-            Space::new().height(Length::Fixed(20.0)),
+            Space::new().height(Length::Fixed(26.0)),
+            Space::new().height(Length::Fixed(0.0)),
             text("LR").size(14),
-            Space::new().height(Length::Fixed(30.0)),
+            button(text("SOLO").size(12))
+                .padding([6, 8])
+                .style(move |_theme: &Theme, _status| toggle_button_style(is_soloed, Color::from_rgb8(0xF0, 0xC0, 0x30)))
+                .on_press(Message::MasterSoloPressed),
             text(value_label).size(14),
             row![
                 vertical_slider(0.0..=1.0, value, Message::MasterFaderChanged)
@@ -1153,7 +1299,7 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
             .align_y(iced::Alignment::End),
             button(text("MUTE").size(12))
                 .padding([6, 8])
-                .style(move |_theme: &Theme, _status| toggle_button_style(is_muted))
+                .style(move |_theme: &Theme, _status| toggle_button_style(is_muted, Color::from_rgb8(0xE0, 0x50, 0x50)))
                 .on_press(Message::MasterMutePressed),
             text("LR").size(14),
         ]
@@ -1162,17 +1308,25 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
     };
 
     container(
-        scrollable(
-            column![
-                row![strips.height(Length::Fill), master_strip].spacing(14),
-                Space::new().height(Length::Fixed(18.0))
-            ]
-                .height(Length::Fill),
-        )
-        .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new()))
-        .height(Length::Fill),
+        row![
+            scrollable(
+                column![
+                    strips.height(Length::Fill),
+                    Space::new().height(Length::Fixed(18.0))
+                ]
+                    .height(Length::Fill),
+            )
+            .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new()))
+            .width(Length::Fill)
+            .height(Length::Fill),
+            master_strip,
+        ]
+        .spacing(14)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(iced::Alignment::End),
     )
-    .width(Length::FillPortion(3))
+    .width(Length::Fill)
     .height(Length::Fill)
     .into()
 }
@@ -1181,6 +1335,10 @@ fn strip_label(target: FaderTarget) -> String {
     match target {
         FaderTarget::Channel(channel) => format!("CH {channel:02}"),
         FaderTarget::Aux(aux) => format!("AUX {aux:02}"),
+        FaderTarget::Bus(bus) => format!("BUS {bus:02}"),
+        FaderTarget::FxRtn(fx) => format!("FX {fx:02}"),
+        FaderTarget::Mtx(mtx) => format!("MTX {mtx:02}"),
+        FaderTarget::Dca(dca) => format!("DCA {dca}"),
         FaderTarget::Main => "LR".to_owned(),
     }
 }
@@ -1262,28 +1420,26 @@ fn linear_meter_to_db(value: f32) -> f32 {
     (20.0 * value.log10()).clamp(-90.0, 20.0)
 }
 
-fn toggle_button_style(active: bool) -> button::Style {
-    let border_color = Color::from_rgb8(0x7D, 0xD3, 0xA7);
-
+fn toggle_button_style(active: bool, color: Color) -> button::Style {
     if active {
         button::Style {
-            background: Some(Background::Color(border_color)),
+            background: Some(Background::Color(color)),
             text_color: Color::from_rgb8(0x14, 0x18, 0x20),
             border: Border {
                 radius: 4.0.into(),
                 width: 1.0,
-                color: border_color,
+                color,
             },
             ..Default::default()
         }
     } else {
         button::Style {
             background: Some(Background::Color(Color::TRANSPARENT)),
-            text_color: border_color,
+            text_color: color,
             border: Border {
                 radius: 4.0.into(),
                 width: 1.0,
-                color: border_color,
+                color,
             },
             ..Default::default()
         }
@@ -1422,9 +1578,9 @@ fn meter_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<Vec<StripM
     .boxed()
 }
 
-fn master_meter_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<[f32; 2], String>> {
+fn master_meter_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<MainMeterLevels, String>> {
     let mixer_addr = *mixer_addr;
-    stream::channel(32, move |mut output: mpsc::Sender<Result<[f32; 2], String>>| async move {
+    stream::channel(32, move |mut output: mpsc::Sender<Result<MainMeterLevels, String>>| async move {
         let socket = match bind_meter_socket().await {
             Ok(socket) => socket,
             Err(error) => {
