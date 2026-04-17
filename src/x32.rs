@@ -13,7 +13,13 @@ const XINFO_RESPONSE: &str = "/xinfo";
 const INFO_RESPONSE: &str = "/info";
 const STATUS_RESPONSE: &str = "/status";
 const FADER_RESPONSE_SUFFIX: &str = "/mix/fader";
+const PAN_RESPONSE_SUFFIX: &str = "/mix/pan";
+const GAIN_RESPONSE_SUFFIX: &str = "/preamp/trim";
+const HEADAMP_GAIN_RESPONSE_SUFFIX: &str = "/gain";
+const HEADAMP_INDEX_RESPONSE_SUFFIX: &str = "/index";
 const MUTE_RESPONSE_SUFFIX: &str = "/mix/on";
+const SOLO_RESPONSE_PREFIX: &str = "/-stat/solosw/";
+const NAME_RESPONSE_SUFFIX: &str = "/config/name";
 const INPUT_METERS_REQUEST: &str = "/meters/0";
 const INPUT_METERS_ALIAS: &str = "meters/0";
 
@@ -251,6 +257,300 @@ impl FaderBankProbe {
     }
 }
 
+impl PanBankProbe {
+    pub fn new(target: SocketAddr) -> Self {
+        Self {
+            target,
+            bind_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+            timeout: Duration::from_millis(400),
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_bind_addr(mut self, bind_addr: SocketAddr) -> Self {
+        self.bind_addr = bind_addr;
+        self
+    }
+
+    pub fn load(&self, targets: &[FaderTarget]) -> Result<Vec<StripPan>, ProbeError> {
+        let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
+        socket
+            .set_read_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+        socket
+            .set_write_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+
+        let mut pans = Vec::with_capacity(targets.len());
+
+        for &target in targets {
+            let path = pan_path(target);
+            let request = osc_query(&path);
+            socket
+                .send_to(&request, self.target)
+                .map_err(ProbeError::Send)?;
+
+            let mut buffer = [0_u8; 2048];
+            let (received, _) = socket.recv_from(&mut buffer).map_err(ProbeError::Receive)?;
+            let packet = &buffer[..received];
+            let Some((reply_path, value)) = parse_pan_value(packet) else {
+                return Err(ProbeError::Protocol(format!(
+                    "unexpected OSC reply while reading pan for {target}"
+                )));
+            };
+
+            if reply_path != path {
+                return Err(ProbeError::Protocol(format!(
+                    "received pan reply for '{reply_path}' while reading {target}"
+                )));
+            }
+
+            pans.push(StripPan { target, value });
+        }
+
+        Ok(pans)
+    }
+
+    pub fn set(&self, target: FaderTarget, value: f32) -> Result<(), ProbeError> {
+        let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
+        socket
+            .set_write_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+
+        let packet = osc_float_message(&pan_path(target), value.clamp(0.0, 1.0));
+        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        Ok(())
+    }
+}
+
+impl SendBankProbe {
+    pub fn new(target: SocketAddr) -> Self {
+        Self {
+            target,
+            bind_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+            timeout: Duration::from_millis(400),
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_bind_addr(mut self, bind_addr: SocketAddr) -> Self {
+        self.bind_addr = bind_addr;
+        self
+    }
+
+    pub fn load(&self, targets: &[FaderTarget], buses: &[u8]) -> Result<Vec<StripSend>, ProbeError> {
+        let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
+        socket
+            .set_read_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+        socket
+            .set_write_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+
+        let mut sends = Vec::with_capacity(targets.len() * buses.len());
+
+        for &target in targets {
+            for &bus in buses {
+                let path = send_level_path(target, bus);
+                let request = osc_query(&path);
+                socket
+                    .send_to(&request, self.target)
+                    .map_err(ProbeError::Send)?;
+
+                let mut buffer = [0_u8; 2048];
+                let (received, _) = socket.recv_from(&mut buffer).map_err(ProbeError::Receive)?;
+                let packet = &buffer[..received];
+                let Some((reply_path, value)) = parse_send_value(packet) else {
+                    return Err(ProbeError::Protocol(format!(
+                        "unexpected OSC reply while reading send {bus:02} for {target}"
+                    )));
+                };
+
+                if reply_path != path {
+                    return Err(ProbeError::Protocol(format!(
+                        "received send reply for '{reply_path}' while reading bus {bus:02} for {target}"
+                    )));
+                }
+
+                sends.push(StripSend { target, bus, value });
+            }
+        }
+
+        Ok(sends)
+    }
+
+    pub fn set(&self, target: FaderTarget, bus: u8, value: f32) -> Result<(), ProbeError> {
+        let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
+        socket
+            .set_write_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+
+        let packet = osc_float_message(&send_level_path(target, bus), value.clamp(0.0, 1.0));
+        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        Ok(())
+    }
+}
+
+impl GainBankProbe {
+    pub fn new(target: SocketAddr) -> Self {
+        Self {
+            target,
+            bind_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+            timeout: Duration::from_millis(400),
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_bind_addr(mut self, bind_addr: SocketAddr) -> Self {
+        self.bind_addr = bind_addr;
+        self
+    }
+
+    pub fn load(&self, targets: &[FaderTarget]) -> Result<Vec<StripGain>, ProbeError> {
+        let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
+        socket
+            .set_read_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+        socket
+            .set_write_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+
+        let mut gains = Vec::with_capacity(targets.len());
+
+        for &target in targets {
+            gains.push(self.read_gain(&socket, target)?);
+        }
+
+        Ok(gains)
+    }
+
+    pub fn set(
+        &self,
+        target: FaderTarget,
+        source: GainSource,
+        value: f32,
+    ) -> Result<(), ProbeError> {
+        let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
+        socket
+            .set_write_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+
+        let packet = match source {
+            GainSource::Headamp(index) => {
+                osc_float_message(&headamp_gain_path(index), encode_headamp_gain(value))
+            }
+            GainSource::Trim => {
+                osc_float_message(&gain_path(target), encode_trim_gain(value))
+            }
+        };
+        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        Ok(())
+    }
+
+    fn read_gain(&self, socket: &UdpSocket, target: FaderTarget) -> Result<StripGain, ProbeError> {
+        if let Some(index) = self.read_headamp_index(socket, target)? {
+            let path = headamp_gain_path(index);
+            let request = osc_query(&path);
+            socket
+                .send_to(&request, self.target)
+                .map_err(ProbeError::Send)?;
+
+            let mut buffer = [0_u8; 2048];
+            let (received, _) = socket.recv_from(&mut buffer).map_err(ProbeError::Receive)?;
+            let packet = &buffer[..received];
+            let Some((reply_path, value)) = parse_headamp_gain_value(packet) else {
+                return Err(ProbeError::Protocol(format!(
+                    "unexpected OSC reply while reading headamp gain for {target}"
+                )));
+            };
+
+            if reply_path != path {
+                return Err(ProbeError::Protocol(format!(
+                    "received headamp gain reply for '{reply_path}' while reading {target}"
+                )));
+            }
+
+            Ok(StripGain {
+                target,
+                value: decode_headamp_gain(value),
+                source: GainSource::Headamp(index),
+            })
+        } else {
+            let path = gain_path(target);
+            let request = osc_query(&path);
+            socket
+                .send_to(&request, self.target)
+                .map_err(ProbeError::Send)?;
+
+            let mut buffer = [0_u8; 2048];
+            let (received, _) = socket.recv_from(&mut buffer).map_err(ProbeError::Receive)?;
+            let packet = &buffer[..received];
+            let Some((reply_path, value)) = parse_gain_value(packet) else {
+                return Err(ProbeError::Protocol(format!(
+                    "unexpected OSC reply while reading trim gain for {target}"
+                )));
+            };
+
+            if reply_path != path {
+                return Err(ProbeError::Protocol(format!(
+                    "received trim gain reply for '{reply_path}' while reading {target}"
+                )));
+            }
+
+            Ok(StripGain {
+                target,
+                value: decode_trim_gain(value),
+                source: GainSource::Trim,
+            })
+        }
+    }
+
+    fn read_headamp_index(
+        &self,
+        socket: &UdpSocket,
+        target: FaderTarget,
+    ) -> Result<Option<u8>, ProbeError> {
+        let path = headamp_index_path(target);
+        let request = osc_query(&path);
+        socket
+            .send_to(&request, self.target)
+            .map_err(ProbeError::Send)?;
+
+        let mut buffer = [0_u8; 2048];
+        let (received, _) = socket.recv_from(&mut buffer).map_err(ProbeError::Receive)?;
+        let packet = &buffer[..received];
+        let Some((reply_path, value)) = parse_headamp_index_value(packet) else {
+            return Err(ProbeError::Protocol(format!(
+                "unexpected OSC reply while reading headamp index for {target}"
+            )));
+        };
+
+        if reply_path != path {
+            return Err(ProbeError::Protocol(format!(
+                "received headamp index reply for '{reply_path}' while reading {target}"
+            )));
+        }
+
+        if value < 0 {
+            Ok(None)
+        } else {
+            Ok(Some(value as u8))
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaderTarget {
     Channel(u8),
@@ -272,8 +572,46 @@ pub struct StripFader {
     pub value: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StripPan {
+    pub target: FaderTarget,
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StripGain {
+    pub target: FaderTarget,
+    pub value: f32,
+    pub source: GainSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GainSource {
+    Headamp(u8),
+    Trim,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StripSend {
+    pub target: FaderTarget,
+    pub bus: u8,
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StripName {
+    pub target: FaderTarget,
+    pub value: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StripMute {
+    pub target: FaderTarget,
+    pub on: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StripSolo {
     pub target: FaderTarget,
     pub on: bool,
 }
@@ -282,6 +620,18 @@ pub struct StripMute {
 pub struct StripMeter {
     pub target: FaderTarget,
     pub level_linear: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConsoleUpdate {
+    Gain(StripGain),
+    HeadampGain { index: u8, value: f32 },
+    Fader(StripFader),
+    Pan(StripPan),
+    Send(StripSend),
+    Mute(StripMute),
+    Solo(StripSolo),
+    Name(StripName),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -324,6 +674,111 @@ pub struct MuteBankProbe {
     target: SocketAddr,
     bind_addr: SocketAddr,
     timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct PanBankProbe {
+    target: SocketAddr,
+    bind_addr: SocketAddr,
+    timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct GainBankProbe {
+    target: SocketAddr,
+    bind_addr: SocketAddr,
+    timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct SendBankProbe {
+    target: SocketAddr,
+    bind_addr: SocketAddr,
+    timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct NameBankProbe {
+    target: SocketAddr,
+    bind_addr: SocketAddr,
+    timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct SoloBankProbe {
+    target: SocketAddr,
+    bind_addr: SocketAddr,
+    timeout: Duration,
+}
+
+impl SoloBankProbe {
+    pub fn new(target: SocketAddr) -> Self {
+        Self {
+            target,
+            bind_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+            timeout: Duration::from_millis(400),
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_bind_addr(mut self, bind_addr: SocketAddr) -> Self {
+        self.bind_addr = bind_addr;
+        self
+    }
+
+    pub fn load(&self, targets: &[FaderTarget]) -> Result<Vec<StripSolo>, ProbeError> {
+        let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
+        socket
+            .set_read_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+        socket
+            .set_write_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+
+        let mut solos = Vec::with_capacity(targets.len());
+
+        for &target in targets {
+            let path = solo_path(target);
+            let request = osc_query(&path);
+            socket
+                .send_to(&request, self.target)
+                .map_err(ProbeError::Send)?;
+
+            let mut buffer = [0_u8; 2048];
+            let (received, _) = socket.recv_from(&mut buffer).map_err(ProbeError::Receive)?;
+            let packet = &buffer[..received];
+            let Some((reply_path, on)) = parse_switch_value(packet) else {
+                return Err(ProbeError::Protocol(format!(
+                    "unexpected OSC reply while reading solo for {target}"
+                )));
+            };
+
+            if reply_path != path {
+                return Err(ProbeError::Protocol(format!(
+                    "received solo reply for '{reply_path}' while reading {target}"
+                )));
+            }
+
+            solos.push(StripSolo { target, on });
+        }
+
+        Ok(solos)
+    }
+
+    pub fn set(&self, target: FaderTarget, on: bool) -> Result<(), ProbeError> {
+        let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
+        socket
+            .set_write_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+
+        let packet = osc_int_message(&solo_path(target), i32::from(on));
+        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        Ok(())
+    }
 }
 
 impl MuteBankProbe {
@@ -393,6 +848,65 @@ impl MuteBankProbe {
         let packet = osc_int_message(&mute_path(target), i32::from(on));
         socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
         Ok(())
+    }
+}
+
+impl NameBankProbe {
+    pub fn new(target: SocketAddr) -> Self {
+        Self {
+            target,
+            bind_addr: SocketAddr::from(([0, 0, 0, 0], 0)),
+            timeout: Duration::from_millis(400),
+        }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    pub fn with_bind_addr(mut self, bind_addr: SocketAddr) -> Self {
+        self.bind_addr = bind_addr;
+        self
+    }
+
+    pub fn load(&self, targets: &[FaderTarget]) -> Result<Vec<StripName>, ProbeError> {
+        let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
+        socket
+            .set_read_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+        socket
+            .set_write_timeout(Some(self.timeout))
+            .map_err(ProbeError::Configure)?;
+
+        let mut names = Vec::with_capacity(targets.len());
+
+        for &target in targets {
+            let path = name_path(target);
+            let request = osc_query(&path);
+            socket
+                .send_to(&request, self.target)
+                .map_err(ProbeError::Send)?;
+
+            let mut buffer = [0_u8; 2048];
+            let (received, _) = socket.recv_from(&mut buffer).map_err(ProbeError::Receive)?;
+            let packet = &buffer[..received];
+            let Some((reply_path, value)) = parse_string_value(packet) else {
+                return Err(ProbeError::Protocol(format!(
+                    "unexpected OSC reply while reading name for {target}"
+                )));
+            };
+
+            if reply_path != path {
+                return Err(ProbeError::Protocol(format!(
+                    "received name reply for '{reply_path}' while reading {target}"
+                )));
+            }
+
+            names.push(StripName { target, value });
+        }
+
+        Ok(names)
     }
 }
 
@@ -524,10 +1038,64 @@ fn fader_path(target: FaderTarget) -> String {
     }
 }
 
+fn pan_path(target: FaderTarget) -> String {
+    match target {
+        FaderTarget::Channel(channel) => format!("/ch/{channel:02}/mix/pan"),
+        FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/mix/pan"),
+    }
+}
+
+fn gain_path(target: FaderTarget) -> String {
+    match target {
+        FaderTarget::Channel(channel) => format!("/ch/{channel:02}/preamp/trim"),
+        FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/preamp/trim"),
+    }
+}
+
+fn headamp_index_path(target: FaderTarget) -> String {
+    let index = match target {
+        FaderTarget::Channel(channel) => channel - 1,
+        FaderTarget::Aux(aux) => 31 + aux,
+    };
+    format!("/-ha/{index:02}/index")
+}
+
+fn headamp_gain_path(index: u8) -> String {
+    format!("/headamp/{index:03}/gain")
+}
+
+fn headamp_index_from_gain_path(path: &str) -> Option<u8> {
+    path.strip_prefix("/headamp/")
+        .and_then(|rest| rest.strip_suffix("/gain"))
+        .and_then(|index| index.parse::<u8>().ok())
+}
+
+fn send_level_path(target: FaderTarget, bus: u8) -> String {
+    match target {
+        FaderTarget::Channel(channel) => format!("/ch/{channel:02}/mix/{bus:02}/level"),
+        FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/mix/{bus:02}/level"),
+    }
+}
+
 fn mute_path(target: FaderTarget) -> String {
     match target {
         FaderTarget::Channel(channel) => format!("/ch/{channel:02}/mix/on"),
         FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/mix/on"),
+    }
+}
+
+fn solo_path(target: FaderTarget) -> String {
+    let id = match target {
+        FaderTarget::Channel(channel) => channel,
+        FaderTarget::Aux(aux) => 32 + aux,
+    };
+    format!("/-stat/solosw/{id:02}")
+}
+
+fn name_path(target: FaderTarget) -> String {
+    match target {
+        FaderTarget::Channel(channel) => format!("/ch/{channel:02}/config/name"),
+        FaderTarget::Aux(aux) => format!("/auxin/{aux:02}/config/name"),
     }
 }
 
@@ -567,6 +1135,60 @@ pub fn renew_request(alias: &str) -> Vec<u8> {
     packet
 }
 
+pub fn parse_console_update(packet: &[u8]) -> Option<ConsoleUpdate> {
+    if let Some((path, value)) = parse_gain_value(packet)
+        && let Some(target) = target_from_channel_path(&path, GAIN_RESPONSE_SUFFIX)
+    {
+        return Some(ConsoleUpdate::Gain(StripGain {
+            target,
+            value: decode_trim_gain(value),
+            source: GainSource::Trim,
+        }));
+    }
+
+    if let Some((path, value)) = parse_headamp_gain_value(packet)
+        && let Some(index) = headamp_index_from_gain_path(&path)
+    {
+        return Some(ConsoleUpdate::HeadampGain {
+            index,
+            value: decode_headamp_gain(value),
+        });
+    }
+
+    if let Some((path, value)) = parse_fader_value(packet)
+        && let Some(target) = target_from_channel_path(&path, FADER_RESPONSE_SUFFIX)
+    {
+        return Some(ConsoleUpdate::Fader(StripFader { target, value }));
+    }
+
+    if let Some((path, value)) = parse_pan_value(packet)
+        && let Some(target) = target_from_channel_path(&path, PAN_RESPONSE_SUFFIX)
+    {
+        return Some(ConsoleUpdate::Pan(StripPan { target, value }));
+    }
+
+    if let Some((target, bus, value)) = parse_send_update(packet) {
+        return Some(ConsoleUpdate::Send(StripSend { target, bus, value }));
+    }
+
+    if let Some((path, on)) = parse_switch_value(packet) {
+        if let Some(target) = target_from_channel_path(&path, MUTE_RESPONSE_SUFFIX) {
+            return Some(ConsoleUpdate::Mute(StripMute { target, on }));
+        }
+        if let Some(target) = target_from_solo_path(&path) {
+            return Some(ConsoleUpdate::Solo(StripSolo { target, on }));
+        }
+    }
+
+    if let Some((path, value)) = parse_string_value(packet)
+        && let Some(target) = target_from_channel_path(&path, NAME_RESPONSE_SUFFIX)
+    {
+        return Some(ConsoleUpdate::Name(StripName { target, value }));
+    }
+
+    None
+}
+
 fn osc_query(address: &str) -> Vec<u8> {
     osc_string(address)
 }
@@ -594,9 +1216,99 @@ fn osc_string(value: &str) -> Vec<u8> {
     bytes
 }
 
+fn target_from_channel_path(path: &str, suffix: &str) -> Option<FaderTarget> {
+    if let Some(index) = path
+        .strip_prefix("/ch/")
+        .and_then(|rest| rest.strip_suffix(suffix))
+    {
+        return index.parse::<u8>().ok().map(FaderTarget::Channel);
+    }
+
+    if let Some(index) = path
+        .strip_prefix("/auxin/")
+        .and_then(|rest| rest.strip_suffix(suffix))
+    {
+        return index.parse::<u8>().ok().map(FaderTarget::Aux);
+    }
+
+    None
+}
+
+fn target_from_solo_path(path: &str) -> Option<FaderTarget> {
+    let id = path.strip_prefix(SOLO_RESPONSE_PREFIX)?.parse::<u8>().ok()?;
+    match id {
+        1..=32 => Some(FaderTarget::Channel(id)),
+        33..=40 => Some(FaderTarget::Aux(id - 32)),
+        _ => None,
+    }
+}
+
+fn target_and_bus_from_send_path(path: &str) -> Option<(FaderTarget, u8)> {
+    let (target, rest) = if let Some(rest) = path.strip_prefix("/ch/") {
+        let (channel, rest) = rest.split_once('/')?;
+        (FaderTarget::Channel(channel.parse::<u8>().ok()?), rest)
+    } else if let Some(rest) = path.strip_prefix("/auxin/") {
+        let (aux, rest) = rest.split_once('/')?;
+        (FaderTarget::Aux(aux.parse::<u8>().ok()?), rest)
+    } else {
+        return None;
+    };
+
+    let rest = rest.strip_prefix("mix/")?;
+    let (bus, tail) = rest.split_once('/')?;
+    if tail != "level" {
+        return None;
+    }
+
+    let bus = bus.parse::<u8>().ok()?;
+    if !(1..=16).contains(&bus) {
+        return None;
+    }
+
+    Some((target, bus))
+}
+
 fn parse_fader_value(packet: &[u8]) -> Option<(String, f32)> {
+    parse_float_value(packet, FADER_RESPONSE_SUFFIX)
+}
+
+fn parse_pan_value(packet: &[u8]) -> Option<(String, f32)> {
+    parse_float_value(packet, PAN_RESPONSE_SUFFIX)
+}
+
+fn parse_gain_value(packet: &[u8]) -> Option<(String, f32)> {
+    parse_float_value(packet, GAIN_RESPONSE_SUFFIX)
+}
+
+fn parse_headamp_gain_value(packet: &[u8]) -> Option<(String, f32)> {
+    let (path, value) = parse_float_value(packet, HEADAMP_GAIN_RESPONSE_SUFFIX)?;
+    path.starts_with("/headamp/").then_some((path, value))
+}
+
+fn parse_headamp_index_value(packet: &[u8]) -> Option<(String, i32)> {
+    let (path, value) = parse_int_value(packet)?;
+    if path.starts_with("/-ha/") && path.ends_with(HEADAMP_INDEX_RESPONSE_SUFFIX) {
+        Some((path, value))
+    } else {
+        None
+    }
+}
+
+fn parse_send_value(packet: &[u8]) -> Option<(String, f32)> {
+    let (path, value) = parse_float_value(packet, "/level")?;
+    target_and_bus_from_send_path(&path)?;
+    Some((path, value))
+}
+
+fn parse_send_update(packet: &[u8]) -> Option<(FaderTarget, u8, f32)> {
+    let (path, value) = parse_send_value(packet)?;
+    let (target, bus) = target_and_bus_from_send_path(&path)?;
+    Some((target, bus, value))
+}
+
+fn parse_float_value(packet: &[u8], suffix: &str) -> Option<(String, f32)> {
     let path = osc_address(packet)?;
-    if !path.ends_with(FADER_RESPONSE_SUFFIX) {
+    if !path.ends_with(suffix) {
         return None;
     }
 
@@ -614,9 +1326,47 @@ fn parse_fader_value(packet: &[u8]) -> Option<(String, f32)> {
     Some((path.to_owned(), f32::from_bits(u32::from_be_bytes(value_bytes))))
 }
 
+fn parse_int_value(packet: &[u8]) -> Option<(String, i32)> {
+    let path = osc_address(packet)?;
+
+    let mut offset = osc_padded_len(packet)?;
+    let type_tag_end = packet.get(offset..)?.iter().position(|byte| *byte == 0)?;
+    let type_tag = std::str::from_utf8(packet.get(offset..offset + type_tag_end)?).ok()?;
+    let type_tag_len = osc_padded_len(packet.get(offset..)?)?;
+    offset += type_tag_len;
+
+    if type_tag != ",i" {
+        return None;
+    }
+
+    let value_bytes: [u8; 4] = packet.get(offset..offset + 4)?.try_into().ok()?;
+    Some((path.to_owned(), i32::from_be_bytes(value_bytes)))
+}
+
+fn decode_headamp_gain(raw: f32) -> f32 {
+    quantize_gain_step(raw.clamp(0.0, 1.0) * 72.0 - 12.0, -12.0, 0.1)
+}
+
+fn encode_headamp_gain(db: f32) -> f32 {
+    ((quantize_gain_step(db, -12.0, 0.1) + 12.0) / 72.0).clamp(0.0, 1.0)
+}
+
+fn decode_trim_gain(raw: f32) -> f32 {
+    quantize_gain_step(raw, -18.0, 0.25)
+}
+
+fn encode_trim_gain(db: f32) -> f32 {
+    quantize_gain_step(db, -18.0, 0.25)
+}
+
+fn quantize_gain_step(value: f32, min: f32, step: f32) -> f32 {
+    let steps = ((value - min) / step).round();
+    min + steps * step
+}
+
 fn parse_switch_value(packet: &[u8]) -> Option<(String, bool)> {
     let path = osc_address(packet)?;
-    if !path.ends_with(MUTE_RESPONSE_SUFFIX) {
+    if !path.ends_with(MUTE_RESPONSE_SUFFIX) && !path.starts_with(SOLO_RESPONSE_PREFIX) {
         return None;
     }
 
@@ -632,6 +1382,28 @@ fn parse_switch_value(packet: &[u8]) -> Option<(String, bool)> {
 
     let value_bytes: [u8; 4] = packet.get(offset..offset + 4)?.try_into().ok()?;
     Some((path.to_owned(), i32::from_be_bytes(value_bytes) != 0))
+}
+
+fn parse_string_value(packet: &[u8]) -> Option<(String, String)> {
+    let path = osc_address(packet)?;
+    if !path.ends_with(NAME_RESPONSE_SUFFIX) {
+        return None;
+    }
+
+    let mut offset = osc_padded_len(packet)?;
+    let type_tag_end = packet.get(offset..)?.iter().position(|byte| *byte == 0)?;
+    let type_tag = std::str::from_utf8(packet.get(offset..offset + type_tag_end)?).ok()?;
+    let type_tag_len = osc_padded_len(packet.get(offset..)?)?;
+    offset += type_tag_len;
+
+    if type_tag != ",s" {
+        return None;
+    }
+
+    let value_bytes = packet.get(offset..)?;
+    let value_end = value_bytes.iter().position(|byte| *byte == 0)?;
+    let value = std::str::from_utf8(&value_bytes[..value_end]).ok()?;
+    Some((path.to_owned(), value.to_owned()))
 }
 
 pub fn parse_input_meter_packet(packet: &[u8]) -> Result<Vec<StripMeter>, ProbeError> {
@@ -814,12 +1586,77 @@ mod tests {
     }
 
     #[test]
+    fn parses_float_pan_reply() {
+        let packet = [
+            osc_string("/auxin/05/mix/pan").as_slice(),
+            b",f\0\0".as_slice(),
+            0.25_f32.to_bits().to_be_bytes().as_slice(),
+        ]
+        .concat();
+
+        let (path, value) = parse_pan_value(&packet).expect("should parse pan reply");
+        assert_eq!(path, "/auxin/05/mix/pan");
+        assert!((value - 0.25).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parses_float_gain_reply() {
+        let packet = [
+            osc_string("/ch/02/preamp/trim").as_slice(),
+            b",f\0\0".as_slice(),
+            (-6.0_f32).to_bits().to_be_bytes().as_slice(),
+        ]
+        .concat();
+
+        let (path, value) = parse_gain_value(&packet).expect("should parse gain reply");
+        assert_eq!(path, "/ch/02/preamp/trim");
+        assert!((value + 6.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn parses_float_send_reply() {
+        let packet = [
+            osc_string("/ch/02/mix/16/level").as_slice(),
+            b",f\0\0".as_slice(),
+            0.5_f32.to_bits().to_be_bytes().as_slice(),
+        ]
+        .concat();
+
+        let (path, value) = parse_send_value(&packet).expect("should parse send reply");
+        assert_eq!(path, "/ch/02/mix/16/level");
+        assert!((value - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn parses_int_mute_reply() {
         let packet = osc_int_message("/auxin/05/mix/on", 0);
 
         let (path, on) = parse_switch_value(&packet).expect("should parse mute reply");
         assert_eq!(path, "/auxin/05/mix/on");
         assert!(!on);
+    }
+
+    #[test]
+    fn parses_int_solo_reply() {
+        let packet = osc_int_message("/-stat/solosw/37", 1);
+
+        let (path, on) = parse_switch_value(&packet).expect("should parse solo reply");
+        assert_eq!(path, "/-stat/solosw/37");
+        assert!(on);
+    }
+
+    #[test]
+    fn parses_string_name_reply() {
+        let packet = [
+            osc_string("/auxin/05/config/name").as_slice(),
+            b",s\0\0".as_slice(),
+            osc_string("Lead Vox").as_slice(),
+        ]
+        .concat();
+
+        let (path, value) = parse_string_value(&packet).expect("should parse name reply");
+        assert_eq!(path, "/auxin/05/config/name");
+        assert_eq!(value, "Lead Vox");
     }
 
     #[test]
