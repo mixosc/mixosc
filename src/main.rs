@@ -1,24 +1,24 @@
 use iced::futures::sink::SinkExt;
-use iced::futures::{channel::mpsc, stream::BoxStream, StreamExt};
+use iced::futures::{StreamExt, channel::mpsc, stream::BoxStream};
 use iced::stream;
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Background, Border, Color, Element, Fill, Length, Subscription, Task, Theme, time};
 use iced_fonts::LUCIDE_FONT_BYTES;
 use iced_fonts::lucide::{
-    audio_lines, audio_waveform, equal, file_input, panel_left, send, shield,
-    sliders_vertical, toggle_left,
+    audio_lines, audio_waveform, equal, file_input, panel_left, send, shield, sliders_vertical,
+    toggle_left,
 };
 use maolan_widgets::horizontal_slider::horizontal_slider;
 use maolan_widgets::meters::meters;
 use maolan_widgets::slider::slider as vertical_slider;
 use maolan_widgets::ticks::meter_ticks;
 use mixosc::{
-    ColorBankProbe, ConnectionProbe, ConsoleUpdate, DiscoveredMixer, DiscoveryProbe, FaderBankProbe,
-    FaderTarget, GainBankProbe, GainSource, MainMeterLevels, MuteBankProbe, NameBankProbe,
-    PanBankProbe, ProbeOutcome, ProbeResponse, SendBankProbe, SoloBankProbe, StripColor, StripFader,
-    StripGain, StripMeter, StripMute, StripName, StripPan, StripSend, StripSolo, XREMOTE_REQUEST,
-    batchsubscribe_meter_request, parse_console_update, parse_input_meter_packet,
-    parse_main_meter_packet, parse_target, renew_request,
+    ColorBankProbe, ConnectionProbe, ConsoleUpdate, DiscoveredMixer, DiscoveryProbe,
+    FaderBankProbe, FaderTarget, GainBankProbe, GainSource, MainMeterLevels, MuteBankProbe,
+    NameBankProbe, PanBankProbe, ProbeOutcome, ProbeResponse, SendBankProbe, SoloBankProbe,
+    StripColor, StripFader, StripGain, StripMeter, StripMute, StripName, StripPan, StripSend,
+    StripSolo, XREMOTE_REQUEST, batchsubscribe_meter_request, parse_console_update,
+    parse_input_meter_packet, parse_main_meter_packet, parse_target, renew_request,
 };
 use std::env;
 use std::net::SocketAddr;
@@ -251,7 +251,10 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
                         }
                     }
                 }
-                Ok(ConsoleUpdate::HeadampGain { index: headamp_index, value }) => {
+                Ok(ConsoleUpdate::HeadampGain {
+                    index: headamp_index,
+                    value,
+                }) => {
                     for strip_index in 0..STRIP_COUNT {
                         if app.gain_sources[strip_index] == GainSource::Headamp(headamp_index) {
                             app.gains[strip_index] = Some(value);
@@ -595,7 +598,11 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
                 return Task::none();
             };
             let target = VISIBLE_STRIPS[index];
-            let currently_muted = app.muted.get(index).and_then(|state| *state).unwrap_or(false);
+            let currently_muted = app
+                .muted
+                .get(index)
+                .and_then(|state| *state)
+                .unwrap_or(false);
             let next_on = currently_muted;
             if let Some(muted) = app.muted.get_mut(index) {
                 *muted = Some(!next_on);
@@ -619,8 +626,9 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
                             app.master_muted = Some(!strip.on);
                             continue;
                         }
-                        if let Some(index) =
-                            VISIBLE_STRIPS.iter().position(|target| *target == strip.target)
+                        if let Some(index) = VISIBLE_STRIPS
+                            .iter()
+                            .position(|target| *target == strip.target)
                         {
                             app.muted[index] = Some(!strip.on);
                         }
@@ -640,7 +648,11 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
         }
         Message::SoloPressed(index) => {
             let target = VISIBLE_STRIPS[index];
-            let next_on = !app.soloed.get(index).and_then(|state| *state).unwrap_or(false);
+            let next_on = !app
+                .soloed
+                .get(index)
+                .and_then(|state| *state)
+                .unwrap_or(false);
             if let Some(soloed) = app.soloed.get_mut(index) {
                 *soloed = Some(next_on);
             }
@@ -661,8 +673,9 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
             match result {
                 Ok(solos) => {
                     for strip in solos {
-                        if let Some(index) =
-                            VISIBLE_STRIPS.iter().position(|target| *target == strip.target)
+                        if let Some(index) = VISIBLE_STRIPS
+                            .iter()
+                            .position(|target| *target == strip.target)
                         {
                             app.soloed[index] = Some(strip.on);
                         }
@@ -899,9 +912,9 @@ fn view(app: &StatusApp) -> Element<'_, Message> {
         ]
         .spacing(0),
     )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 #[derive(Clone, Copy)]
@@ -961,7 +974,10 @@ fn top_nav_bar() -> Element<'static, Message> {
     ];
 
     let tabs = TABS.into_iter().fold(
-        row!().spacing(4).padding([3, 3]).align_y(iced::Alignment::Center),
+        row!()
+            .spacing(4)
+            .padding([3, 3])
+            .align_y(iced::Alignment::Center),
         |row, tab| row.push(nav_button(tab)),
     );
 
@@ -985,28 +1001,29 @@ fn nav_button(tab: NavTab) -> Element<'static, Message> {
     let inactive_text = Color::from_rgb8(0xA9, 0xAC, 0xB3);
     let selected = tab.selected;
 
-    let icon = container(
-        (tab.icon)()
-            .size(17)
-            .color(if selected { active_text } else { inactive_text }),
-    )
-    .width(Length::Fixed(24.0))
-    .height(Length::Fixed(24.0))
-    .padding(0)
-    .center_x(Fill)
-    .center_y(Fill)
-    .style(move |_theme: &Theme| container::Style {
-        border: Border {
-            color: if selected {
-                accent
-            } else {
-                Color::from_rgb8(0x6B, 0x6F, 0x76)
+    let icon =
+        container(
+            (tab.icon)()
+                .size(17)
+                .color(if selected { active_text } else { inactive_text }),
+        )
+        .width(Length::Fixed(24.0))
+        .height(Length::Fixed(24.0))
+        .padding(0)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(move |_theme: &Theme| container::Style {
+            border: Border {
+                color: if selected {
+                    accent
+                } else {
+                    Color::from_rgb8(0x6B, 0x6F, 0x76)
+                },
+                width: 1.0,
+                radius: 2.0.into(),
             },
-            width: 1.0,
-            radius: 2.0.into(),
-        },
-        ..Default::default()
-    });
+            ..Default::default()
+        });
 
     button(
         row![
@@ -1093,7 +1110,15 @@ fn spawn_load_colors(mixer_addr: SocketAddr) -> Task<Message> {
 fn spawn_load_gains(mixer_addr: SocketAddr) -> Task<Message> {
     let targets: Vec<FaderTarget> = VISIBLE_STRIPS
         .iter()
-        .filter(|t| !matches!(t, FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)))
+        .filter(|t| {
+            !matches!(
+                t,
+                FaderTarget::Bus(_)
+                    | FaderTarget::FxRtn(_)
+                    | FaderTarget::Mtx(_)
+                    | FaderTarget::Dca(_)
+            )
+        })
         .cloned()
         .collect();
     Task::perform(
@@ -1110,7 +1135,12 @@ fn spawn_load_gains(mixer_addr: SocketAddr) -> Task<Message> {
 fn spawn_load_sends(mixer_addr: SocketAddr) -> Task<Message> {
     let channel_aux_targets: Vec<FaderTarget> = VISIBLE_STRIPS
         .iter()
-        .filter(|t| matches!(t, FaderTarget::Channel(_) | FaderTarget::Aux(_) | FaderTarget::FxRtn(_)))
+        .filter(|t| {
+            matches!(
+                t,
+                FaderTarget::Channel(_) | FaderTarget::Aux(_) | FaderTarget::FxRtn(_)
+            )
+        })
         .cloned()
         .collect();
     let bus_targets: Vec<FaderTarget> = VISIBLE_STRIPS
@@ -1322,117 +1352,116 @@ fn response_name(response: ProbeResponse) -> &'static str {
 }
 
 fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
-    let strips = app
-        .faders
-        .iter()
-        .enumerate()
-        .fold(
-            row!().spacing(0).align_y(iced::Alignment::End),
-            |strips, (index, value)| {
-                let gain_value = app.gain_drag_values[index]
-                    .or(app.gains[index])
-                    .unwrap_or(0.0);
-                let gain_source = app.gain_sources[index];
-                let fader_value = value.unwrap_or(0.0);
-                let pan_value = app.pans[index].unwrap_or(0.5);
-                let gain_label = format_gain_label(gain_value, gain_source);
-                let value_label = value
-                    .map(format_fader_label)
-                    .unwrap_or_else(|| "--".to_owned());
-                let pan_label = format_pan_label(pan_value);
-                let target = VISIBLE_STRIPS[index];
-                let is_muted = app.muted[index].unwrap_or(false);
-                let is_soloed = app.soloed[index].unwrap_or(false);
-                let meter = container(
-                    meters(1, &[app.meters_db[index]], STRIP_METER_HEIGHT)
-                        .map(|()| unreachable!("meter widget does not emit messages")),
-                )
-                .height(Length::Fill);
-                let scale = container(
-                    meter_ticks(STRIP_METER_HEIGHT)
-                        .map(|()| unreachable!("tick widget does not emit messages")),
-                )
-                .height(Length::Fill)
-                .align_y(iced::alignment::Vertical::Bottom);
-                let sends: Element<'_, Message> = match target {
-                    FaderTarget::Channel(_) | FaderTarget::Aux(_) | FaderTarget::FxRtn(_) => {
-                        SEND_BUSES.iter().enumerate().fold(
-                            column!().spacing(2).align_x(iced::Alignment::Center),
-                            |column, (bus_index, _bus)| {
-                                let send_value = app.sends[index][bus_index].unwrap_or(0.0);
-                                column.push(
-                                    horizontal_slider(
-                                        0.0..=1.0,
-                                        send_value,
-                                        move |next| Message::SendChanged(index, bus_index, next)
-                                    )
-                                    .fill_from_start()
-                                    .step(0.01)
-                                    .double_click_reset(0.0)
-                                    .width(Length::Fixed(72.0))
-                                    .height(Length::Fixed(10.0)),
-                                )
-                            },
-                        )
-                        .into()
-                    }
-                    FaderTarget::Bus(_) | FaderTarget::Main => {
-                        MATRIX_SENDS.iter().enumerate().fold(
-                            column!().spacing(2).align_x(iced::Alignment::Center),
-                            |column, (bus_index, _bus)| {
-                                let send_value = app.sends[index][bus_index].unwrap_or(0.0);
-                                column.push(
-                                    horizontal_slider(
-                                        0.0..=1.0,
-                                        send_value,
-                                        move |next| Message::SendChanged(index, bus_index, next)
-                                    )
-                                    .fill_from_start()
-                                    .step(0.01)
-                                    .double_click_reset(0.0)
-                                    .width(Length::Fixed(72.0))
-                                    .height(Length::Fixed(10.0)),
-                                )
-                            },
-                        )
-                        .into()
-                    }
-                    FaderTarget::Mtx(_) | FaderTarget::Dca(_) => Space::new().height(Length::Fixed(0.0)).into(),
-                };
-                let gain_block: Element<'_, Message> = if matches!(target, FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
-                    Space::new().height(Length::Fixed(26.0)).into()
-                } else {
-                    column![
-                        text(gain_label).size(12),
-                        horizontal_slider(
-                            gain_range(gain_source),
-                            gain_value,
-                            move |next| Message::GainChanged(index, next)
-                        )
-                        .fill_from_start()
-                        .filled_color(Color::from_rgb8(0xD9, 0x7A, 0x2B))
-                        .handle_color(Color::from_rgb8(0xF3, 0xB3, 0x6A))
-                        .step(gain_step(gain_source))
-                        .double_click_reset(0.0)
-                        .on_release(Message::GainReleased(index))
-                        .width(Length::Fixed(72.0))
-                        .height(Length::Fixed(10.0)),
-                    ]
-                    .spacing(4)
-                    .align_x(iced::Alignment::Center)
-                    .into()
-                };
+    let strips = app.faders.iter().enumerate().fold(
+        row!().spacing(0).align_y(iced::Alignment::End),
+        |strips, (index, value)| {
+            let gain_value = app.gain_drag_values[index]
+                .or(app.gains[index])
+                .unwrap_or(0.0);
+            let gain_source = app.gain_sources[index];
+            let fader_value = value.unwrap_or(0.0);
+            let pan_value = app.pans[index].unwrap_or(0.5);
+            let gain_label = format_gain_label(gain_value, gain_source);
+            let value_label = value
+                .map(format_fader_label)
+                .unwrap_or_else(|| "--".to_owned());
+            let pan_label = format_pan_label(pan_value);
+            let target = VISIBLE_STRIPS[index];
+            let is_muted = app.muted[index].unwrap_or(false);
+            let is_soloed = app.soloed[index].unwrap_or(false);
+            let meter = container(
+                meters(1, &[app.meters_db[index]], STRIP_METER_HEIGHT)
+                    .map(|()| unreachable!("meter widget does not emit messages")),
+            )
+            .height(Length::Fill);
+            let scale = container(
+                meter_ticks(STRIP_METER_HEIGHT)
+                    .map(|()| unreachable!("tick widget does not emit messages")),
+            )
+            .height(Length::Fill)
+            .align_y(iced::alignment::Vertical::Bottom);
+            let sends: Element<'_, Message> = match target {
+                FaderTarget::Channel(_) | FaderTarget::Aux(_) | FaderTarget::FxRtn(_) => SEND_BUSES
+                    .iter()
+                    .enumerate()
+                    .fold(
+                        column!().spacing(2).align_x(iced::Alignment::Center),
+                        |column, (bus_index, _bus)| {
+                            let send_value = app.sends[index][bus_index].unwrap_or(0.0);
+                            column.push(
+                                horizontal_slider(0.0..=1.0, send_value, move |next| {
+                                    Message::SendChanged(index, bus_index, next)
+                                })
+                                .fill_from_start()
+                                .step(0.01)
+                                .double_click_reset(0.0)
+                                .width(Length::Fixed(72.0))
+                                .height(Length::Fixed(10.0)),
+                            )
+                        },
+                    )
+                    .into(),
+                FaderTarget::Bus(_) | FaderTarget::Main => MATRIX_SENDS
+                    .iter()
+                    .enumerate()
+                    .fold(
+                        column!().spacing(2).align_x(iced::Alignment::Center),
+                        |column, (bus_index, _bus)| {
+                            let send_value = app.sends[index][bus_index].unwrap_or(0.0);
+                            column.push(
+                                horizontal_slider(0.0..=1.0, send_value, move |next| {
+                                    Message::SendChanged(index, bus_index, next)
+                                })
+                                .fill_from_start()
+                                .step(0.01)
+                                .double_click_reset(0.0)
+                                .width(Length::Fixed(72.0))
+                                .height(Length::Fixed(10.0)),
+                            )
+                        },
+                    )
+                    .into(),
+                FaderTarget::Mtx(_) | FaderTarget::Dca(_) => {
+                    Space::new().height(Length::Fixed(0.0)).into()
+                }
+            };
+            let gain_block: Element<'_, Message> = if matches!(
+                target,
+                FaderTarget::Bus(_)
+                    | FaderTarget::FxRtn(_)
+                    | FaderTarget::Mtx(_)
+                    | FaderTarget::Dca(_)
+            ) {
+                Space::new().height(Length::Fixed(26.0)).into()
+            } else {
+                column![
+                    text(gain_label).size(12),
+                    horizontal_slider(gain_range(gain_source), gain_value, move |next| {
+                        Message::GainChanged(index, next)
+                    })
+                    .fill_from_start()
+                    .filled_color(Color::from_rgb8(0xD9, 0x7A, 0x2B))
+                    .handle_color(Color::from_rgb8(0xF3, 0xB3, 0x6A))
+                    .step(gain_step(gain_source))
+                    .double_click_reset(0.0)
+                    .on_release(Message::GainReleased(index))
+                    .width(Length::Fixed(72.0))
+                    .height(Length::Fixed(10.0)),
+                ]
+                .spacing(4)
+                .align_x(iced::Alignment::Center)
+                .into()
+            };
 
-                let pan_block: Element<'_, Message> = if matches!(target, FaderTarget::Dca(_) | FaderTarget::Mtx(_)) {
+            let pan_block: Element<'_, Message> =
+                if matches!(target, FaderTarget::Dca(_) | FaderTarget::Mtx(_)) {
                     Space::new().height(Length::Fixed(0.0)).into()
                 } else {
                     column![
                         text(pan_label).size(12),
-                        horizontal_slider(
-                            0.0..=1.0,
-                            pan_value,
-                            move |next| Message::PanChanged(index, next)
-                        )
+                        horizontal_slider(0.0..=1.0, pan_value, move |next| Message::PanChanged(
+                            index, next
+                        ))
                         .step(0.01)
                         .double_click_reset(0.5)
                         .width(Length::Fixed(72.0))
@@ -1443,82 +1472,94 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                     .into()
                 };
 
-                let solo_button: Element<'_, Message> = if matches!(target, FaderTarget::Mtx(_)) {
-                    Space::new().height(Length::Fixed(0.0)).into()
-                } else {
-                    button(text("SOLO").size(12))
-                        .padding([6, 8])
-                        .style(move |_theme: &Theme, _status| toggle_button_style(is_soloed, Color::from_rgb8(0xF0, 0xC0, 0x30)))
-                        .on_press(Message::SoloPressed(index))
-                        .into()
-                };
+            let solo_button: Element<'_, Message> = if matches!(target, FaderTarget::Mtx(_)) {
+                Space::new().height(Length::Fixed(0.0)).into()
+            } else {
+                button(text("SOLO").size(12))
+                    .padding([6, 8])
+                    .style(move |_theme: &Theme, _status| {
+                        toggle_button_style(is_soloed, Color::from_rgb8(0xF0, 0xC0, 0x30))
+                    })
+                    .on_press(Message::SoloPressed(index))
+                    .into()
+            };
 
-                let mut strip = column![gain_block].spacing(10).align_x(iced::Alignment::Center);
-                if !matches!(target, FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
-                    strip = strip.push(sends);
-                }
-                strip = strip.push(pan_block);
-                let strip_color = app.colors[index].unwrap_or(0);
-                let color_rgb = x32_color_to_rgb(strip_color);
-                let is_inverted = (9..=15).contains(&strip_color);
-                let text_color = if is_inverted { Color::BLACK } else { color_rgb };
-                let bg = if is_inverted { Some(Background::Color(color_rgb)) } else { None };
-                strip = strip.push(
-                    container(text(strip_name(app, index, target)).size(14).color(text_color))
-                        .style(move |_theme: &Theme| container::Style {
-                            border: Border {
-                                color: color_rgb,
-                                width: 1.0,
-                                radius: 4.0.into(),
-                            },
-                            background: bg,
-                            ..Default::default()
-                        })
-                        .padding([2, 6]),
-                );
-                if !matches!(target, FaderTarget::Mtx(_)) {
-                    strip = strip.push(solo_button);
-                }
-                strip = strip.push(text(value_label).size(14));
-                strip = strip.push(
-                    row![
-                        vertical_slider(
-                            0.0..=1.0,
-                            fader_value,
-                            move |next| Message::FaderChanged(index, next)
-                        )
-                        .height(Length::Fill)
-                        .width(Length::Fixed(20.0))
-                        .double_click_reset(0.75)
-                        .step(0.01),
-                        scale,
-                        meter,
-                    ]
-                    .spacing(6)
-                    .height(Length::Fill)
-                    .align_y(iced::Alignment::End),
-                );
-                strip = strip.push(
-                    button(text("MUTE").size(12))
-                        .padding([6, 8])
-                        .style(move |_theme: &Theme, _status| toggle_button_style(is_muted, Color::from_rgb8(0xE0, 0x50, 0x50)))
-                        .on_press(Message::MutePressed(index)),
-                );
-                strip = strip.push(text(strip_label(target)).size(14));
-                strips.push(
-                    container(strip)
-                        .style(move |_theme: &Theme| container::Style {
-                            border: Border {
-                                color: Color::from_rgb8(0x3B, 0x42, 0x52),
-                                width: 1.0,
-                                radius: 4.0.into(),
-                            },
-                            ..Default::default()
-                        })
-                        .padding([0, 7]),
+            let mut strip = column![gain_block]
+                .spacing(10)
+                .align_x(iced::Alignment::Center);
+            if !matches!(target, FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
+                strip = strip.push(sends);
+            }
+            strip = strip.push(pan_block);
+            let strip_color = app.colors[index].unwrap_or(0);
+            let color_rgb = x32_color_to_rgb(strip_color);
+            let is_inverted = (9..=15).contains(&strip_color);
+            let text_color = if is_inverted { Color::BLACK } else { color_rgb };
+            let bg = if is_inverted {
+                Some(Background::Color(color_rgb))
+            } else {
+                None
+            };
+            strip = strip.push(
+                container(
+                    text(strip_name(app, index, target))
+                        .size(14)
+                        .color(text_color),
                 )
-            },
-        );
+                .style(move |_theme: &Theme| container::Style {
+                    border: Border {
+                        color: color_rgb,
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    background: bg,
+                    ..Default::default()
+                })
+                .padding([2, 6]),
+            );
+            if !matches!(target, FaderTarget::Mtx(_)) {
+                strip = strip.push(solo_button);
+            }
+            strip = strip.push(text(value_label).size(14));
+            strip = strip.push(
+                row![
+                    vertical_slider(0.0..=1.0, fader_value, move |next| Message::FaderChanged(
+                        index, next
+                    ))
+                    .height(Length::Fill)
+                    .width(Length::Fixed(20.0))
+                    .double_click_reset(0.75)
+                    .step(0.01),
+                    scale,
+                    meter,
+                ]
+                .spacing(6)
+                .height(Length::Fill)
+                .align_y(iced::Alignment::End),
+            );
+            strip = strip.push(
+                button(text("MUTE").size(12))
+                    .padding([6, 8])
+                    .style(move |_theme: &Theme, _status| {
+                        toggle_button_style(is_muted, Color::from_rgb8(0xE0, 0x50, 0x50))
+                    })
+                    .on_press(Message::MutePressed(index)),
+            );
+            strip = strip.push(text(strip_label(target)).size(14));
+            strips.push(
+                container(strip)
+                    .style(move |_theme: &Theme| container::Style {
+                        border: Border {
+                            color: Color::from_rgb8(0x3B, 0x42, 0x52),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .padding([0, 7]),
+            )
+        },
+    );
 
     let master_strip = {
         let value = app.master_fader.unwrap_or(0.0);
@@ -1548,7 +1589,11 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                 let color_rgb = x32_color_to_rgb(master_color_val);
                 let is_inverted = (9..=15).contains(&master_color_val);
                 let text_color = if is_inverted { Color::BLACK } else { color_rgb };
-                let bg = if is_inverted { Some(Background::Color(color_rgb)) } else { None };
+                let bg = if is_inverted {
+                    Some(Background::Color(color_rgb))
+                } else {
+                    None
+                };
                 container(text("LR").size(14).color(text_color))
                     .style(move |_theme: &Theme| container::Style {
                         border: Border {
@@ -1563,7 +1608,10 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
             },
             button(text("SOLO").size(12))
                 .padding([6, 8])
-                .style(move |_theme: &Theme, _status| toggle_button_style(is_soloed, Color::from_rgb8(0xF0, 0xC0, 0x30)))
+                .style(move |_theme: &Theme, _status| toggle_button_style(
+                    is_soloed,
+                    Color::from_rgb8(0xF0, 0xC0, 0x30)
+                ))
                 .on_press(Message::MasterSoloPressed),
             text(value_label).size(14),
             row![
@@ -1580,7 +1628,10 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
             .align_y(iced::Alignment::End),
             button(text("MUTE").size(12))
                 .padding([6, 8])
-                .style(move |_theme: &Theme, _status| toggle_button_style(is_muted, Color::from_rgb8(0xE0, 0x50, 0x50)))
+                .style(move |_theme: &Theme, _status| toggle_button_style(
+                    is_muted,
+                    Color::from_rgb8(0xE0, 0x50, 0x50)
+                ))
                 .on_press(Message::MasterMutePressed),
             text("LR").size(14),
         ]
@@ -1606,9 +1657,11 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                     strips.height(Length::Fill),
                     Space::new().height(Length::Fixed(18.0))
                 ]
-                    .height(Length::Fill),
+                .height(Length::Fill),
             )
-            .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new()))
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new()
+            ))
             .width(Length::Fill)
             .height(Length::Fill),
             master_strip,
@@ -1625,21 +1678,21 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
 
 fn x32_color_to_rgb(value: u8) -> Color {
     match value {
-        1 => Color::from_rgb8(0xFF, 0x45, 0x45),   // RD
-        2 => Color::from_rgb8(0x32, 0xCD, 0x32),   // GN
-        3 => Color::from_rgb8(0xFF, 0xD7, 0x00),   // YE
-        4 => Color::from_rgb8(0x41, 0x69, 0xE1),   // BL
-        5 => Color::from_rgb8(0xFF, 0x00, 0xFF),   // MG
-        6 => Color::from_rgb8(0x00, 0xFF, 0xFF),   // CY
-        7 => Color::from_rgb8(0xFF, 0xFF, 0xFF),   // WH
-        9 => Color::from_rgb8(0xCC, 0x33, 0x33),   // RDi
-        10 => Color::from_rgb8(0x28, 0xA4, 0x28),  // GNi
-        11 => Color::from_rgb8(0xCC, 0xAC, 0x00),  // YEi
-        12 => Color::from_rgb8(0x33, 0x55, 0xB4),  // BLi
-        13 => Color::from_rgb8(0xCC, 0x00, 0xCC),  // MGi
-        14 => Color::from_rgb8(0x00, 0xCC, 0xCC),  // CYi
-        15 => Color::from_rgb8(0xDD, 0xDD, 0xDD),  // WHi
-        _ => Color::from_rgb8(0x3B, 0x42, 0x52),   // OFF / default
+        1 => Color::from_rgb8(0xFF, 0x45, 0x45),  // RD
+        2 => Color::from_rgb8(0x32, 0xCD, 0x32),  // GN
+        3 => Color::from_rgb8(0xFF, 0xD7, 0x00),  // YE
+        4 => Color::from_rgb8(0x41, 0x69, 0xE1),  // BL
+        5 => Color::from_rgb8(0xFF, 0x00, 0xFF),  // MG
+        6 => Color::from_rgb8(0x00, 0xFF, 0xFF),  // CY
+        7 => Color::from_rgb8(0xFF, 0xFF, 0xFF),  // WH
+        9 => Color::from_rgb8(0xCC, 0x33, 0x33),  // RDi
+        10 => Color::from_rgb8(0x28, 0xA4, 0x28), // GNi
+        11 => Color::from_rgb8(0xCC, 0xAC, 0x00), // YEi
+        12 => Color::from_rgb8(0x33, 0x55, 0xB4), // BLi
+        13 => Color::from_rgb8(0xCC, 0x00, 0xCC), // MGi
+        14 => Color::from_rgb8(0x00, 0xCC, 0xCC), // CYi
+        15 => Color::from_rgb8(0xDD, 0xDD, 0xDD), // WHi
+        _ => Color::from_rgb8(0x3B, 0x42, 0x52),  // OFF / default
     }
 }
 
@@ -1780,7 +1833,9 @@ fn state_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<ConsoleUpd
             };
 
             if let Err(error) = socket.send_to(XREMOTE_REQUEST, mixer_addr).await {
-                let _ = output.send(Err(format!("failed to send /xremote: {error}"))).await;
+                let _ = output
+                    .send(Err(format!("failed to send /xremote: {error}")))
+                    .await;
                 return;
             }
 
@@ -1790,14 +1845,19 @@ fn state_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<ConsoleUpd
             loop {
                 if last_xremote.elapsed() >= Duration::from_secs(5) {
                     if let Err(error) = socket.send_to(XREMOTE_REQUEST, mixer_addr).await {
-                        let _ = output.send(Err(format!("failed to renew /xremote: {error}"))).await;
+                        let _ = output
+                            .send(Err(format!("failed to renew /xremote: {error}")))
+                            .await;
                         return;
                     }
                     last_xremote = Instant::now();
                 }
 
-                match tokio::time::timeout(Duration::from_millis(250), socket.recv_from(&mut buffer))
-                    .await
+                match tokio::time::timeout(
+                    Duration::from_millis(250),
+                    socket.recv_from(&mut buffer),
+                )
+                .await
                 {
                     Ok(Ok((received, _))) => {
                         if let Some(update) = parse_console_update(&buffer[..received]) {
@@ -1812,7 +1872,6 @@ fn state_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<ConsoleUpd
                     }
                     Err(_) => {}
                 }
-
             }
         },
     )
@@ -1821,132 +1880,160 @@ fn state_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<ConsoleUpd
 
 fn meter_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<Vec<StripMeter>, String>> {
     let mixer_addr = *mixer_addr;
-    stream::channel(32, move |mut output: mpsc::Sender<Result<Vec<StripMeter>, String>>| async move {
-        let socket = match bind_meter_socket().await {
-            Ok(socket) => socket,
-            Err(error) => {
-                let _ = output.send(Err(error.to_string())).await;
+    stream::channel(
+        32,
+        move |mut output: mpsc::Sender<Result<Vec<StripMeter>, String>>| async move {
+            let socket = match bind_meter_socket().await {
+                Ok(socket) => socket,
+                Err(error) => {
+                    let _ = output.send(Err(error.to_string())).await;
+                    return;
+                }
+            };
+
+            let subscribe = batchsubscribe_meter_request("meters/0", "/meters/0", 0, 0, 1);
+            if let Err(error) = socket.send_to(XREMOTE_REQUEST, mixer_addr).await {
+                let _ = output
+                    .send(Err(format!("failed to send /xremote: {error}")))
+                    .await;
                 return;
             }
-        };
-
-        let subscribe = batchsubscribe_meter_request("meters/0", "/meters/0", 0, 0, 1);
-        if let Err(error) = socket.send_to(XREMOTE_REQUEST, mixer_addr).await {
-            let _ = output.send(Err(format!("failed to send /xremote: {error}"))).await;
-            return;
-        }
-        if let Err(error) = socket.send_to(&subscribe, mixer_addr).await {
-            let _ = output
-                .send(Err(format!("failed to send /batchsubscribe for meters/0: {error}")))
-                .await;
-            return;
-        }
-
-        let renew = renew_request("meters/0");
-        let mut last_xremote = Instant::now();
-        let mut last_renew = Instant::now();
-        let mut buffer = [0_u8; 4096];
-
-        loop {
-            if last_xremote.elapsed() >= Duration::from_secs(5) {
-                if let Err(error) = socket.send_to(XREMOTE_REQUEST, mixer_addr).await {
-                    let _ = output.send(Err(format!("failed to renew /xremote: {error}"))).await;
-                    return;
-                }
-                last_xremote = Instant::now();
+            if let Err(error) = socket.send_to(&subscribe, mixer_addr).await {
+                let _ = output
+                    .send(Err(format!(
+                        "failed to send /batchsubscribe for meters/0: {error}"
+                    )))
+                    .await;
+                return;
             }
 
-            if last_renew.elapsed() >= Duration::from_secs(5) {
-                if let Err(error) = socket.send_to(&renew, mixer_addr).await {
-                    let _ = output
-                        .send(Err(format!("failed to renew meter subscription: {error}")))
-                        .await;
-                    return;
-                }
-                last_renew = Instant::now();
-            }
+            let renew = renew_request("meters/0");
+            let mut last_xremote = Instant::now();
+            let mut last_renew = Instant::now();
+            let mut buffer = [0_u8; 4096];
 
-            match tokio::time::timeout(Duration::from_millis(250), socket.recv_from(&mut buffer))
-                .await
-            {
-                Ok(Ok((received, _))) => {
-                    if let Ok(meters) = parse_input_meter_packet(&buffer[..received]) {
-                        let _ = output.send(Ok(meters)).await;
+            loop {
+                if last_xremote.elapsed() >= Duration::from_secs(5) {
+                    if let Err(error) = socket.send_to(XREMOTE_REQUEST, mixer_addr).await {
+                        let _ = output
+                            .send(Err(format!("failed to renew /xremote: {error}")))
+                            .await;
+                        return;
                     }
+                    last_xremote = Instant::now();
                 }
-                Ok(Err(error)) => {
-                    let _ = output
-                        .send(Err(format!("failed while receiving meter stream: {error}")))
-                        .await;
-                    return;
-                }
-                Err(_) => {}
-            }
 
-            sleep(Duration::from_millis(10)).await;
-        }
-    })
+                if last_renew.elapsed() >= Duration::from_secs(5) {
+                    if let Err(error) = socket.send_to(&renew, mixer_addr).await {
+                        let _ = output
+                            .send(Err(format!("failed to renew meter subscription: {error}")))
+                            .await;
+                        return;
+                    }
+                    last_renew = Instant::now();
+                }
+
+                match tokio::time::timeout(
+                    Duration::from_millis(250),
+                    socket.recv_from(&mut buffer),
+                )
+                .await
+                {
+                    Ok(Ok((received, _))) => {
+                        if let Ok(meters) = parse_input_meter_packet(&buffer[..received]) {
+                            let _ = output.send(Ok(meters)).await;
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        let _ = output
+                            .send(Err(format!("failed while receiving meter stream: {error}")))
+                            .await;
+                        return;
+                    }
+                    Err(_) => {}
+                }
+
+                sleep(Duration::from_millis(10)).await;
+            }
+        },
+    )
     .boxed()
 }
 
-fn master_meter_worker(mixer_addr: &SocketAddr) -> BoxStream<'static, Result<MainMeterLevels, String>> {
+fn master_meter_worker(
+    mixer_addr: &SocketAddr,
+) -> BoxStream<'static, Result<MainMeterLevels, String>> {
     let mixer_addr = *mixer_addr;
-    stream::channel(32, move |mut output: mpsc::Sender<Result<MainMeterLevels, String>>| async move {
-        let socket = match bind_meter_socket().await {
-            Ok(socket) => socket,
-            Err(error) => {
-                let _ = output.send(Err(error.to_string())).await;
+    stream::channel(
+        32,
+        move |mut output: mpsc::Sender<Result<MainMeterLevels, String>>| async move {
+            let socket = match bind_meter_socket().await {
+                Ok(socket) => socket,
+                Err(error) => {
+                    let _ = output.send(Err(error.to_string())).await;
+                    return;
+                }
+            };
+
+            let subscribe = batchsubscribe_meter_request("meters/2", "/meters/2", 0, 0, 1);
+            if let Err(error) = socket.send_to(XREMOTE_REQUEST, mixer_addr).await {
+                let _ = output
+                    .send(Err(format!("failed to send /xremote: {error}")))
+                    .await;
                 return;
             }
-        };
-
-        let subscribe = batchsubscribe_meter_request("meters/2", "/meters/2", 0, 0, 1);
-        if let Err(error) = socket.send_to(XREMOTE_REQUEST, mixer_addr).await {
-            let _ = output.send(Err(format!("failed to send /xremote: {error}"))).await;
-            return;
-        }
-        if let Err(error) = socket.send_to(&subscribe, mixer_addr).await {
-            let _ = output
-                .send(Err(format!("failed to send /batchsubscribe for meters/2: {error}")))
-                .await;
-            return;
-        }
-
-        let mut last_renew = Instant::now();
-        let mut buffer = [0_u8; 4096];
-
-        loop {
-            if last_renew.elapsed() >= Duration::from_secs(5) {
-                let renew = renew_request("meters/2");
-                if let Err(error) = socket.send_to(&renew, mixer_addr).await {
-                    let _ = output
-                        .send(Err(format!("failed to renew meter stream meters/2: {error}")))
-                        .await;
-                    return;
-                }
-                last_renew = Instant::now();
+            if let Err(error) = socket.send_to(&subscribe, mixer_addr).await {
+                let _ = output
+                    .send(Err(format!(
+                        "failed to send /batchsubscribe for meters/2: {error}"
+                    )))
+                    .await;
+                return;
             }
 
-            match tokio::time::timeout(Duration::from_millis(250), socket.recv_from(&mut buffer))
-                .await
-            {
-                Ok(Ok((received, _))) => {
-                    if let Ok(levels) = parse_main_meter_packet(&buffer[..received]) {
-                        let _ = output.send(Ok(levels)).await;
+            let mut last_renew = Instant::now();
+            let mut buffer = [0_u8; 4096];
+
+            loop {
+                if last_renew.elapsed() >= Duration::from_secs(5) {
+                    let renew = renew_request("meters/2");
+                    if let Err(error) = socket.send_to(&renew, mixer_addr).await {
+                        let _ = output
+                            .send(Err(format!(
+                                "failed to renew meter stream meters/2: {error}"
+                            )))
+                            .await;
+                        return;
                     }
+                    last_renew = Instant::now();
                 }
-                Ok(Err(error)) => {
-                    let _ = output
-                        .send(Err(format!("failed while receiving main meter stream: {error}")))
-                        .await;
-                    return;
-                }
-                Err(_) => {}
-            }
 
-            sleep(Duration::from_millis(10)).await;
-        }
-    })
+                match tokio::time::timeout(
+                    Duration::from_millis(250),
+                    socket.recv_from(&mut buffer),
+                )
+                .await
+                {
+                    Ok(Ok((received, _))) => {
+                        if let Ok(levels) = parse_main_meter_packet(&buffer[..received]) {
+                            let _ = output.send(Ok(levels)).await;
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        let _ = output
+                            .send(Err(format!(
+                                "failed while receiving main meter stream: {error}"
+                            )))
+                            .await;
+                        return;
+                    }
+                    Err(_) => {}
+                }
+
+                sleep(Duration::from_millis(10)).await;
+            }
+        },
+    )
     .boxed()
 }
 

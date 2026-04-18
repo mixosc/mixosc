@@ -255,7 +255,9 @@ impl FaderBankProbe {
             .map_err(ProbeError::Configure)?;
 
         let packet = osc_float_message(&fader_path(target), value.clamp(0.0, 1.0));
-        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        socket
+            .send_to(&packet, self.target)
+            .map_err(ProbeError::Send)?;
         Ok(())
     }
 }
@@ -325,7 +327,9 @@ impl PanBankProbe {
             .map_err(ProbeError::Configure)?;
 
         let packet = osc_float_message(&pan_path(target), value.clamp(0.0, 1.0));
-        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        socket
+            .send_to(&packet, self.target)
+            .map_err(ProbeError::Send)?;
         Ok(())
     }
 }
@@ -349,7 +353,11 @@ impl SendBankProbe {
         self
     }
 
-    pub fn load(&self, targets: &[FaderTarget], buses: &[u8]) -> Result<Vec<StripSend>, ProbeError> {
+    pub fn load(
+        &self,
+        targets: &[FaderTarget],
+        buses: &[u8],
+    ) -> Result<Vec<StripSend>, ProbeError> {
         let socket = UdpSocket::bind(self.bind_addr).map_err(ProbeError::Bind)?;
         socket
             .set_read_timeout(Some(self.timeout))
@@ -397,7 +405,9 @@ impl SendBankProbe {
             .map_err(ProbeError::Configure)?;
 
         let packet = osc_float_message(&send_level_path(target, bus), value.clamp(0.0, 1.0));
-        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        socket
+            .send_to(&packet, self.target)
+            .map_err(ProbeError::Send)?;
         Ok(())
     }
 }
@@ -445,7 +455,10 @@ impl GainBankProbe {
         source: GainSource,
         value: f32,
     ) -> Result<(), ProbeError> {
-        if matches!(target, FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
+        if matches!(
+            target,
+            FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)
+        ) {
             return Ok(());
         }
 
@@ -458,16 +471,19 @@ impl GainBankProbe {
             GainSource::Headamp(index) => {
                 osc_float_message(&headamp_gain_path(index), encode_headamp_gain(value))
             }
-            GainSource::Trim => {
-                osc_float_message(&gain_path(target), encode_trim_gain(value))
-            }
+            GainSource::Trim => osc_float_message(&gain_path(target), encode_trim_gain(value)),
         };
-        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        socket
+            .send_to(&packet, self.target)
+            .map_err(ProbeError::Send)?;
         Ok(())
     }
 
     fn read_gain(&self, socket: &UdpSocket, target: FaderTarget) -> Result<StripGain, ProbeError> {
-        if matches!(target, FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
+        if matches!(
+            target,
+            FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)
+        ) {
             return Ok(StripGain {
                 target,
                 value: 0.0,
@@ -475,7 +491,9 @@ impl GainBankProbe {
             });
         }
 
-        if gain_uses_headamp(target) && let Some(index) = self.read_headamp_index(socket, target)? {
+        if gain_uses_headamp(target)
+            && let Some(index) = self.read_headamp_index(socket, target)?
+        {
             let path = headamp_gain_path(index);
             let request = osc_query(&path);
             socket
@@ -819,7 +837,9 @@ impl SoloBankProbe {
             .map_err(ProbeError::Configure)?;
 
         let packet = osc_int_message(&solo_path(target), i32::from(on));
-        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        socket
+            .send_to(&packet, self.target)
+            .map_err(ProbeError::Send)?;
         Ok(())
     }
 }
@@ -889,7 +909,9 @@ impl MuteBankProbe {
             .map_err(ProbeError::Configure)?;
 
         let packet = osc_int_message(&mute_path(target), i32::from(on));
-        socket.send_to(&packet, self.target).map_err(ProbeError::Send)?;
+        socket
+            .send_to(&packet, self.target)
+            .map_err(ProbeError::Send)?;
         Ok(())
     }
 }
@@ -1409,20 +1431,32 @@ fn target_from_channel_path(path: &str, suffix: &str) -> Option<FaderTarget> {
 
     // DCA paths have a different structure without /mix/ prefix
     if suffix == FADER_RESPONSE_SUFFIX {
-        if let Some(index) = path.strip_prefix("/dca/").and_then(|rest| rest.strip_suffix("/fader")) {
+        if let Some(index) = path
+            .strip_prefix("/dca/")
+            .and_then(|rest| rest.strip_suffix("/fader"))
+        {
             return index.parse::<u8>().ok().map(FaderTarget::Dca);
         }
     }
     if suffix == MUTE_RESPONSE_SUFFIX {
-        if let Some(index) = path.strip_prefix("/dca/").and_then(|rest| rest.strip_suffix("/mix/on")) {
+        if let Some(index) = path
+            .strip_prefix("/dca/")
+            .and_then(|rest| rest.strip_suffix("/mix/on"))
+        {
             return index.parse::<u8>().ok().map(FaderTarget::Dca);
         }
-        if let Some(index) = path.strip_prefix("/dca/").and_then(|rest| rest.strip_suffix("/on")) {
+        if let Some(index) = path
+            .strip_prefix("/dca/")
+            .and_then(|rest| rest.strip_suffix("/on"))
+        {
             return index.parse::<u8>().ok().map(FaderTarget::Dca);
         }
     }
     if suffix == NAME_RESPONSE_SUFFIX {
-        if let Some(index) = path.strip_prefix("/dca/").and_then(|rest| rest.strip_suffix("/config/name")) {
+        if let Some(index) = path
+            .strip_prefix("/dca/")
+            .and_then(|rest| rest.strip_suffix("/config/name"))
+        {
             return index.parse::<u8>().ok().map(FaderTarget::Dca);
         }
     }
@@ -1435,7 +1469,10 @@ fn target_from_channel_path(path: &str, suffix: &str) -> Option<FaderTarget> {
 }
 
 fn target_from_solo_path(path: &str) -> Option<FaderTarget> {
-    let id = path.strip_prefix(SOLO_RESPONSE_PREFIX)?.parse::<u8>().ok()?;
+    let id = path
+        .strip_prefix(SOLO_RESPONSE_PREFIX)?
+        .parse::<u8>()
+        .ok()?;
     match id {
         1..=32 => Some(FaderTarget::Channel(id)),
         33..=40 => Some(FaderTarget::Aux(id - 32)),
@@ -1538,7 +1575,10 @@ fn parse_float_value(packet: &[u8], suffix: &str) -> Option<(String, f32)> {
     }
 
     let value_bytes: [u8; 4] = packet.get(offset..offset + 4)?.try_into().ok()?;
-    Some((path.to_owned(), f32::from_bits(u32::from_be_bytes(value_bytes))))
+    Some((
+        path.to_owned(),
+        f32::from_bits(u32::from_be_bytes(value_bytes)),
+    ))
 }
 
 fn parse_int_value(packet: &[u8]) -> Option<(String, i32)> {
@@ -1609,7 +1649,10 @@ fn parse_switch_value(packet: &[u8]) -> Option<(String, bool)> {
 
 fn is_dca_mute_path(path: &str) -> bool {
     path.strip_prefix("/dca/")
-        .and_then(|rest| rest.strip_suffix("/mix/on").or_else(|| rest.strip_suffix("/on")))
+        .and_then(|rest| {
+            rest.strip_suffix("/mix/on")
+                .or_else(|| rest.strip_suffix("/on"))
+        })
         .and_then(|index| index.parse::<u8>().ok())
         .is_some()
 }
@@ -1697,9 +1740,10 @@ pub fn parse_main_meter_packet(packet: &[u8]) -> Result<MainMeterLevels, ProbeEr
 
     let mut matrices = [0.0f32; 6];
     for i in 0..6 {
-        matrices[i] = f32::from_le_bytes(floats[(16 + i) * 4..(16 + i) * 4 + 4].try_into().map_err(|_| {
-            ProbeError::Protocol(format!("matrix meter {i} float slice size mismatch"))
-        })?);
+        matrices[i] =
+            f32::from_le_bytes(floats[(16 + i) * 4..(16 + i) * 4 + 4].try_into().map_err(
+                |_| ProbeError::Protocol(format!("matrix meter {i} float slice size mismatch")),
+            )?);
     }
 
     Ok(MainMeterLevels {
@@ -2127,7 +2171,8 @@ mod tests {
         ]
         .concat();
 
-        let (path, on) = parse_switch_value(&packet).expect("should parse FX return float mute reply");
+        let (path, on) =
+            parse_switch_value(&packet).expect("should parse FX return float mute reply");
         assert_eq!(path, "/fxrtn/03/mix/on");
         assert!(!on);
     }
