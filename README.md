@@ -1,6 +1,8 @@
 # mixosc
 OSC Mixer in Rust
 
+![MixOSC](images/mixosc.png)
+
 Minimal X32 connection monitor.
 
 `mixosc` exposes:
