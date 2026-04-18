@@ -2001,7 +2001,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-widgets"
-version = "0.0.3"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e81e55444a0416492b481b5caa0beb1f7a43dd8cc1d0a23dcd09254b8136e357"
 dependencies = [
  "iced",
  "iced_fonts",
@@ -2083,6 +2085,7 @@ name = "mixosc"
 version = "0.0.1"
 dependencies = [
  "iced",
+ "iced_fonts",
  "maolan-widgets",
  "serde",
  "serde_json",
