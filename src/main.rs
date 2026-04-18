@@ -139,8 +139,29 @@ struct StatusApp {
     master_muted: Option<bool>,
     master_soloed: Option<bool>,
     master_color: Option<u8>,
+    active_view: AppView,
+    selected_strip: Option<SelectedStrip>,
     status: ConnectionStatus,
     last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppView {
+    Mixer,
+    Channel,
+    Config,
+    Gate,
+    Dyn,
+    Eq,
+    Sends,
+    Main,
+    Fx,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectedStrip {
+    Strip(usize),
+    Master,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +196,8 @@ enum Message {
     MutePressed(usize),
     MasterMutePressed,
     MasterSoloPressed,
+    NavSelected(AppView),
+    StripSelected(SelectedStrip),
     MutesLoaded(Result<Vec<StripMute>, String>),
     MuteSetFinished(Result<(), String>),
     SoloPressed(usize),
@@ -207,6 +230,8 @@ fn new() -> (StatusApp, Task<Message>) {
         master_muted: None,
         master_soloed: None,
         master_color: None,
+        active_view: AppView::Mixer,
+        selected_strip: Some(SelectedStrip::Strip(0)),
         status: ConnectionStatus::Checking,
         last_error: None,
     };
@@ -409,6 +434,14 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
                 return Task::none();
             };
             spawn_set_fader(mixer_addr, FaderTarget::Main, value)
+        }
+        Message::NavSelected(view) => {
+            app.active_view = view;
+            Task::none()
+        }
+        Message::StripSelected(selected) => {
+            app.selected_strip = Some(selected);
+            Task::none()
         }
         Message::NamesLoaded(result) => {
             match result {
@@ -844,8 +877,17 @@ fn theme(_app: &StatusApp) -> Theme {
 
 fn view(app: &StatusApp) -> Element<'_, Message> {
     let content: Element<'_, Message> = if matches!(app.status, ConnectionStatus::Connected(_)) {
-        container(mixer_strips(app))
-            .padding([24, 16])
+        let mixer_view: Element<'_, Message> = if let Some(panel) = top_detail_panel(app) {
+            column![panel, mixer_strips(app)]
+                .spacing(0)
+                .height(Length::Fill)
+                .into()
+        } else {
+            mixer_strips(app)
+        };
+
+        container(mixer_view)
+            .padding([0, 16])
             .height(Length::Fill)
             .into()
     } else {
@@ -903,73 +945,89 @@ fn view(app: &StatusApp) -> Element<'_, Message> {
             .into()
     };
 
-    container(
+    let body = if matches!(app.status, ConnectionStatus::Connected(_)) {
         column![
-            container(top_nav_bar())
+            container(top_nav_bar(app))
                 .padding([0, 16])
                 .width(Length::Shrink),
             content
         ]
-        .spacing(0),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+        .spacing(0)
+        .into()
+    } else {
+        content
+    };
+
+    container(body).width(Length::Fill).height(Length::Fill).into()
+}
+
+fn top_detail_panel(app: &StatusApp) -> Option<Element<'_, Message>> {
+    match app.active_view {
+        AppView::Mixer => None,
+        AppView::Channel => Some(channel_detail_panel(app)),
+        AppView::Config => Some(config_detail_panel().into()),
+        AppView::Gate => Some(gate_detail_panel().into()),
+        AppView::Dyn => Some(dyn_detail_panel().into()),
+        AppView::Eq => Some(eq_detail_panel().into()),
+        AppView::Sends => Some(sends_detail_panel().into()),
+        AppView::Main => Some(main_detail_panel().into()),
+        AppView::Fx => Some(fx_detail_panel().into()),
+    }
 }
 
 #[derive(Clone, Copy)]
 struct NavTab {
     icon: fn() -> iced::widget::Text<'static, Theme>,
     label: &'static str,
-    selected: bool,
+    view: AppView,
 }
 
-fn top_nav_bar() -> Element<'static, Message> {
+fn top_nav_bar(app: &StatusApp) -> Element<'static, Message> {
     const TABS: [NavTab; 9] = [
         NavTab {
             icon: sliders_vertical,
             label: "Mixer",
-            selected: true,
+            view: AppView::Mixer,
         },
         NavTab {
             icon: panel_left,
             label: "Channel",
-            selected: false,
+            view: AppView::Channel,
         },
         NavTab {
             icon: file_input,
             label: "Config",
-            selected: false,
+            view: AppView::Config,
         },
         NavTab {
             icon: toggle_left,
             label: "Gate",
-            selected: false,
+            view: AppView::Gate,
         },
         NavTab {
             icon: audio_waveform,
             label: "Dyn",
-            selected: false,
+            view: AppView::Dyn,
         },
         NavTab {
             icon: equal,
             label: "EQ",
-            selected: false,
+            view: AppView::Eq,
         },
         NavTab {
             icon: send,
             label: "Sends",
-            selected: false,
+            view: AppView::Sends,
         },
         NavTab {
             icon: audio_lines,
             label: "Main",
-            selected: false,
+            view: AppView::Main,
         },
         NavTab {
             icon: shield,
             label: "FX1 - 8",
-            selected: false,
+            view: AppView::Fx,
         },
     ];
 
@@ -978,7 +1036,7 @@ fn top_nav_bar() -> Element<'static, Message> {
             .spacing(4)
             .padding([3, 3])
             .align_y(iced::Alignment::Center),
-        |row, tab| row.push(nav_button(tab)),
+        |row, tab| row.push(nav_button(tab, app.active_view == tab.view)),
     );
 
     container(tabs)
@@ -995,11 +1053,10 @@ fn top_nav_bar() -> Element<'static, Message> {
         .into()
 }
 
-fn nav_button(tab: NavTab) -> Element<'static, Message> {
-    let accent = Color::from_rgb8(0x29, 0xE6, 0xF2);
+fn nav_button(tab: NavTab, selected: bool) -> Element<'static, Message> {
+    let accent = mixer_accent_color();
     let active_text = accent;
     let inactive_text = Color::from_rgb8(0xA9, 0xAC, 0xB3);
-    let selected = tab.selected;
 
     let icon =
         container(
@@ -1056,7 +1113,19 @@ fn nav_button(tab: NavTab) -> Element<'static, Message> {
         text_color: if selected { active_text } else { inactive_text },
         ..Default::default()
     })
+    .on_press(Message::NavSelected(tab.view))
     .into()
+}
+
+fn mixer_accent_color() -> Color {
+    Color::from_rgb8(0x29, 0xE6, 0xF2)
+}
+
+fn strip_module_item(label: &'static str) -> Element<'static, Message> {
+    text(label)
+        .size(12)
+        .color(Color::from_rgb8(0xC7, 0xC9, 0xD3))
+        .into()
 }
 
 fn spawn_probe(mixer_addr: SocketAddr) -> Task<Message> {
@@ -1369,6 +1438,7 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
             let target = VISIBLE_STRIPS[index];
             let is_muted = app.muted[index].unwrap_or(false);
             let is_soloed = app.soloed[index].unwrap_or(false);
+            let is_selected = app.selected_strip == Some(SelectedStrip::Strip(index));
             let meter = container(
                 meters(1, &[app.meters_db[index]], STRIP_METER_HEIGHT)
                     .map(|()| unreachable!("meter widget does not emit messages")),
@@ -1425,52 +1495,31 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                     Space::new().height(Length::Fixed(0.0)).into()
                 }
             };
-            let gain_block: Element<'_, Message> = if matches!(
-                target,
-                FaderTarget::Bus(_)
-                    | FaderTarget::FxRtn(_)
-                    | FaderTarget::Mtx(_)
-                    | FaderTarget::Dca(_)
-            ) {
-                Space::new().height(Length::Fixed(26.0)).into()
+            let hide_strip_top_controls = app.active_view != AppView::Mixer;
+            let top_sends: Element<'_, Message> = if hide_strip_top_controls {
+                Space::new().height(Length::Fixed(0.0)).into()
             } else {
-                column![
-                    text(gain_label).size(12),
-                    horizontal_slider(gain_range(gain_source), gain_value, move |next| {
-                        Message::GainChanged(index, next)
-                    })
-                    .fill_from_start()
-                    .filled_color(Color::from_rgb8(0xD9, 0x7A, 0x2B))
-                    .handle_color(Color::from_rgb8(0xF3, 0xB3, 0x6A))
-                    .step(gain_step(gain_source))
-                    .double_click_reset(0.0)
-                    .on_release(Message::GainReleased(index))
-                    .width(Length::Fixed(72.0))
-                    .height(Length::Fixed(10.0)),
-                ]
-                .spacing(4)
-                .align_x(iced::Alignment::Center)
-                .into()
+                sends
             };
-
-            let pan_block: Element<'_, Message> =
-                if matches!(target, FaderTarget::Dca(_) | FaderTarget::Mtx(_)) {
-                    Space::new().height(Length::Fixed(0.0)).into()
+            let top_gain_label = if hide_strip_top_controls {
+                String::new()
+            } else {
+                gain_label
+            };
+            let top_controls = strip_mixer_top(
+                index,
+                target,
+                gain_value,
+                gain_source,
+                top_gain_label,
+                pan_value,
+                if hide_strip_top_controls {
+                    String::new()
                 } else {
-                    column![
-                        text(pan_label).size(12),
-                        horizontal_slider(0.0..=1.0, pan_value, move |next| Message::PanChanged(
-                            index, next
-                        ))
-                        .step(0.01)
-                        .double_click_reset(0.5)
-                        .width(Length::Fixed(72.0))
-                        .height(Length::Fixed(12.0)),
-                    ]
-                    .spacing(4)
-                    .align_x(iced::Alignment::Center)
-                    .into()
-                };
+                    pan_label
+                },
+                top_sends,
+            );
 
             let solo_button: Element<'_, Message> = if matches!(target, FaderTarget::Mtx(_)) {
                 Space::new().height(Length::Fixed(0.0)).into()
@@ -1484,13 +1533,9 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                     .into()
             };
 
-            let mut strip = column![gain_block]
+            let mut strip = column![top_controls]
                 .spacing(10)
                 .align_x(iced::Alignment::Center);
-            if !matches!(target, FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
-                strip = strip.push(sends);
-            }
-            strip = strip.push(pan_block);
             let strip_color = app.colors[index].unwrap_or(0);
             let color_rgb = x32_color_to_rgb(strip_color);
             let is_inverted = (9..=15).contains(&strip_color);
@@ -1501,21 +1546,25 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                 None
             };
             strip = strip.push(
-                container(
-                    text(strip_name(app, index, target))
-                        .size(14)
-                        .color(text_color),
+                button(
+                    container(
+                        text(strip_name(app, index, target))
+                            .size(14)
+                            .color(text_color),
+                    )
+                    .style(move |_theme: &Theme| container::Style {
+                        border: Border {
+                            color: color_rgb,
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        background: bg,
+                        ..Default::default()
+                    })
+                    .padding([2, 6]),
                 )
-                .style(move |_theme: &Theme| container::Style {
-                    border: Border {
-                        color: color_rgb,
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    background: bg,
-                    ..Default::default()
-                })
-                .padding([2, 6]),
+                .style(button::text)
+                .on_press(Message::StripSelected(SelectedStrip::Strip(index))),
             );
             if !matches!(target, FaderTarget::Mtx(_)) {
                 strip = strip.push(solo_button);
@@ -1550,8 +1599,12 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                 container(strip)
                     .style(move |_theme: &Theme| container::Style {
                         border: Border {
-                            color: Color::from_rgb8(0x3B, 0x42, 0x52),
-                            width: 1.0,
+                            color: if is_selected {
+                                mixer_accent_color()
+                            } else {
+                                Color::from_rgb8(0x3B, 0x42, 0x52)
+                            },
+                            width: if is_selected { 2.0 } else { 1.0 },
                             radius: 4.0.into(),
                         },
                         ..Default::default()
@@ -1561,6 +1614,7 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
         },
     );
 
+    let master_selected = app.selected_strip == Some(SelectedStrip::Master);
     let master_strip = {
         let value = app.master_fader.unwrap_or(0.0);
         let value_label = app
@@ -1594,17 +1648,21 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
                 } else {
                     None
                 };
-                container(text("LR").size(14).color(text_color))
-                    .style(move |_theme: &Theme| container::Style {
-                        border: Border {
-                            color: color_rgb,
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        background: bg,
-                        ..Default::default()
-                    })
-                    .padding([2, 6])
+                button(
+                    container(text("LR").size(14).color(text_color))
+                        .style(move |_theme: &Theme| container::Style {
+                            border: Border {
+                                color: color_rgb,
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            background: bg,
+                            ..Default::default()
+                        })
+                        .padding([2, 6]),
+                )
+                .style(button::text)
+                .on_press(Message::StripSelected(SelectedStrip::Master))
             },
             button(text("SOLO").size(12))
                 .padding([6, 8])
@@ -1642,8 +1700,12 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
     let master_strip = container(master_strip)
         .style(move |_theme: &Theme| container::Style {
             border: Border {
-                color: Color::from_rgb8(0x3B, 0x42, 0x52),
-                width: 1.0,
+                color: if master_selected {
+                    mixer_accent_color()
+                } else {
+                    Color::from_rgb8(0x3B, 0x42, 0x52)
+                },
+                width: if master_selected { 2.0 } else { 1.0 },
                 radius: 0.0.into(),
             },
             ..Default::default()
@@ -1673,6 +1735,689 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
     )
     .width(Length::Fill)
     .height(Length::Fill)
+    .into()
+}
+
+fn strip_mixer_top(
+    index: usize,
+    target: FaderTarget,
+    gain_value: f32,
+    gain_source: GainSource,
+    gain_label: String,
+    pan_value: f32,
+    pan_label: String,
+    sends: Element<'_, Message>,
+) -> Element<'_, Message> {
+    let hide_upper_controls = gain_label.is_empty();
+    let hide_balance = pan_label.is_empty();
+    let gain_block: Element<'static, Message> = if hide_upper_controls
+        || matches!(
+            target,
+            FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)
+        )
+    {
+        Space::new().height(Length::Fixed(26.0)).into()
+    } else {
+        column![
+            text(gain_label).size(12),
+            horizontal_slider(gain_range(gain_source), gain_value, move |next| {
+                Message::GainChanged(index, next)
+            })
+            .fill_from_start()
+            .filled_color(Color::from_rgb8(0xD9, 0x7A, 0x2B))
+            .handle_color(Color::from_rgb8(0xF3, 0xB3, 0x6A))
+            .step(gain_step(gain_source))
+            .double_click_reset(0.0)
+            .on_release(Message::GainReleased(index))
+            .width(Length::Fixed(72.0))
+            .height(Length::Fixed(10.0)),
+        ]
+        .spacing(4)
+        .align_x(iced::Alignment::Center)
+        .into()
+    };
+
+    let pan_block: Element<'static, Message> =
+        if hide_balance || matches!(target, FaderTarget::Dca(_) | FaderTarget::Mtx(_)) {
+            Space::new().height(Length::Fixed(0.0)).into()
+        } else {
+            column![
+                text(pan_label).size(12),
+                horizontal_slider(0.0..=1.0, pan_value, move |next| Message::PanChanged(
+                    index, next
+                ))
+                .step(0.01)
+                .double_click_reset(0.5)
+                .width(Length::Fixed(72.0))
+                .height(Length::Fixed(12.0)),
+            ]
+            .spacing(4)
+            .align_x(iced::Alignment::Center)
+            .into()
+        };
+
+    let mut top = column![gain_block].spacing(10).align_x(iced::Alignment::Center);
+    if !hide_upper_controls && !matches!(target, FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
+        top = top.push(sends);
+        top = top.push(
+            column![
+                strip_module_item("Gate"),
+                strip_module_item("EQ"),
+                strip_module_item("Dyn"),
+            ]
+            .spacing(4)
+            .align_x(iced::Alignment::Center),
+        );
+    }
+    top.push(pan_block).into()
+}
+
+fn channel_detail_panel(app: &StatusApp) -> Element<'_, Message> {
+    let selected = app.selected_strip.unwrap_or(SelectedStrip::Strip(0));
+    let index = match selected {
+        SelectedStrip::Strip(index) => index,
+        SelectedStrip::Master => 0,
+    };
+    let target = VISIBLE_STRIPS[index];
+    let pan_value = app.pans[index].unwrap_or(0.5);
+    let sends: Element<'_, Message> = match target {
+        FaderTarget::Channel(_) | FaderTarget::Aux(_) | FaderTarget::FxRtn(_) => SEND_BUSES
+            .iter()
+            .enumerate()
+            .fold(column!().spacing(4), |column, (bus_index, bus)| {
+                let send_value = app.sends[index][bus_index].unwrap_or(0.0);
+                column.push(channel_send_row(index, bus_index, *bus, send_value))
+            })
+            .into(),
+        FaderTarget::Bus(_) => MATRIX_SENDS
+            .iter()
+            .enumerate()
+            .fold(column!().spacing(4), |column, (bus_index, bus)| {
+                let send_value = app.sends[index][bus_index].unwrap_or(0.0);
+                column.push(channel_send_row(index, bus_index, *bus, send_value))
+            })
+            .into(),
+        FaderTarget::Mtx(_) | FaderTarget::Dca(_) | FaderTarget::Main => text("No sends")
+            .size(14)
+            .color(Color::from_rgb8(0x8E, 0x94, 0x9D))
+            .into(),
+    };
+
+    let gate_panel = detail_panel("Noise Gate", module_detail_placeholder("Gate"));
+    let eq_panel = detail_panel("Equalizer", module_detail_placeholder("EQ"));
+    let dyn_panel = detail_panel("Dynamics", module_detail_placeholder("Comp"));
+    let sends_panel = detail_panel("Bus Sends", sends);
+    let balance_panel = detail_panel(
+        "Balance",
+        column![
+            text(format_pan_label(pan_value))
+                .size(18)
+                .color(Color::from_rgb8(0xE6, 0xE8, 0xEE)),
+            horizontal_slider(0.0..=1.0, pan_value, move |next| Message::PanChanged(index, next))
+                .step(0.01)
+                .double_click_reset(0.5)
+                .width(Length::Fixed(150.0))
+                .height(Length::Fixed(14.0)),
+        ]
+        .spacing(10)
+        .align_x(iced::Alignment::Center),
+    );
+
+    container(
+        row![
+            gate_panel,
+            eq_panel,
+            dyn_panel,
+            sends_panel,
+            balance_panel,
+        ]
+        .spacing(2),
+    )
+    .height(Length::Shrink)
+    .width(Length::Fill)
+    .into()
+}
+
+fn config_detail_panel() -> Element<'static, Message> {
+    top_panel_shell(row![
+        detail_panel(
+            "Source",
+            column![
+                placeholder_text("Stereo Link"),
+                placeholder_text("Phantom"),
+                placeholder_text("Polarity"),
+                placeholder_select("01 : In01"),
+                tiny_vertical_meter("Gain"),
+            ]
+            .spacing(8)
+        ),
+        detail_panel(
+            "Low Cut",
+            column![
+                module_detail_placeholder("LC"),
+                tiny_vertical_meter("Frequency"),
+            ]
+            .spacing(8)
+        ),
+        detail_panel(
+            "Delay",
+            column![
+                module_detail_placeholder("Dt"),
+                placeholder_text("0.3 ft"),
+                placeholder_text("0.10 m"),
+                tiny_vertical_meter("Delay"),
+            ]
+            .spacing(8)
+        ),
+        detail_panel(
+            "Insert Position",
+            column![
+                row![
+                    module_chip("IN"),
+                    module_chip("GT"),
+                    module_chip("EQ"),
+                    module_chip("DY"),
+                    module_chip("FX"),
+                ]
+                .spacing(4),
+                placeholder_select("OFF"),
+            ]
+            .spacing(10)
+        ),
+    ])
+}
+
+fn gate_detail_panel() -> Element<'static, Message> {
+    top_panel_shell(row![
+        detail_panel(
+            "Active",
+            column![
+                placeholder_button("Active"),
+                module_detail_placeholder("Gain"),
+            ]
+            .spacing(10)
+        ),
+        detail_panel(
+            "Mode",
+            column![
+                placeholder_radio_list(&["Exp 2:1", "Exp 3:1", "Exp 4:1", "Gate 1:1", "Ducker"]),
+                row![
+                    tiny_vertical_meter("Threshold"),
+                    tiny_vertical_meter("Range"),
+                ]
+                .spacing(14),
+            ]
+            .spacing(8)
+        ),
+        detail_panel(
+            "Gain Envelope",
+            row![
+                tiny_vertical_meter("Attack"),
+                tiny_vertical_meter("Hold"),
+                tiny_vertical_meter("Release"),
+            ]
+            .spacing(14)
+        ),
+        detail_panel(
+            "Side Chain Filter",
+            column![
+                module_detail_placeholder("SC"),
+                placeholder_select("Self"),
+                row![
+                    tiny_vertical_meter("Type"),
+                    tiny_vertical_meter("Freq"),
+                ]
+                .spacing(14),
+            ]
+            .spacing(8)
+        ),
+    ])
+}
+
+fn dyn_detail_panel() -> Element<'static, Message> {
+    top_panel_shell(row![
+        detail_panel(
+            "Active",
+            column![
+                placeholder_button("Active"),
+                module_detail_placeholder("Gain"),
+            ]
+            .spacing(10)
+        ),
+        detail_panel(
+            "Mode",
+            column![
+                placeholder_radio_list(&["1", "2", "3", "4", "5", "Peak", "RMS"]),
+                row![
+                    tiny_vertical_meter("Thresh"),
+                    tiny_vertical_meter("Ratio"),
+                    tiny_vertical_meter("Mix"),
+                    tiny_vertical_meter("Gain"),
+                ]
+                .spacing(10),
+            ]
+            .spacing(8)
+        ),
+        detail_panel(
+            "Gain Envelope",
+            row![
+                tiny_vertical_meter("Attack"),
+                tiny_vertical_meter("Hold"),
+                tiny_vertical_meter("Release"),
+            ]
+            .spacing(14)
+        ),
+        detail_panel(
+            "Side Chain Filter",
+            column![
+                module_detail_placeholder("SC"),
+                placeholder_select("Self"),
+                row![
+                    tiny_vertical_meter("Type"),
+                    tiny_vertical_meter("Freq"),
+                ]
+                .spacing(14),
+            ]
+            .spacing(8)
+        ),
+    ])
+}
+
+fn eq_detail_panel() -> Element<'static, Message> {
+    top_panel_shell(row![
+        detail_panel(
+            "Equalizer",
+            column![
+                eq_graph_placeholder(),
+                row![
+                    eq_band_box("Low", "124.7 Hz"),
+                    eq_band_box("LoMid", "496.6 Hz"),
+                    eq_band_box("HiMid", "1.97 kHz"),
+                    eq_band_box("High", "12.02 kHz"),
+                ]
+                .spacing(4),
+            ]
+            .spacing(8),
+        ),
+        detail_panel(
+            "Selected Band",
+            column![
+                placeholder_button("Pre"),
+                placeholder_button("Spec"),
+                tiny_horizontal_meter("Gain"),
+                tiny_horizontal_meter("Freq"),
+                tiny_horizontal_meter("Q"),
+            ]
+            .spacing(8)
+        ),
+    ])
+}
+
+fn sends_detail_panel() -> Element<'static, Message> {
+    top_panel_shell(row![
+        detail_panel(
+            "Tap",
+            column![
+                placeholder_radio_list(&["Input", "Pre EQ", "Post EQ", "Pre Fader", "Post Fader", "Sub Group"]),
+                row![
+                    module_chip("Bus 1"),
+                    module_chip("Bus 2"),
+                    module_chip("Bus 3"),
+                    module_chip("Bus 4"),
+                ]
+                .spacing(4),
+            ]
+            .spacing(8)
+        ),
+        detail_panel(
+            "Bus Sends",
+            column![
+                row![
+                    channel_send_row_placeholder("01"),
+                    channel_send_row_placeholder("02"),
+                    channel_send_row_placeholder("03"),
+                    channel_send_row_placeholder("04"),
+                ]
+                .spacing(8),
+                row![
+                    channel_send_row_placeholder("05"),
+                    channel_send_row_placeholder("06"),
+                    channel_send_row_placeholder("07"),
+                    channel_send_row_placeholder("08"),
+                ]
+                .spacing(8),
+                row![
+                    channel_send_row_placeholder("09"),
+                    channel_send_row_placeholder("10"),
+                    channel_send_row_placeholder("11"),
+                    channel_send_row_placeholder("12"),
+                ]
+                .spacing(8),
+                row![
+                    channel_send_row_placeholder("13"),
+                    channel_send_row_placeholder("14"),
+                    channel_send_row_placeholder("15"),
+                    channel_send_row_placeholder("16"),
+                ]
+                .spacing(8),
+            ]
+            .spacing(6)
+        ),
+    ])
+}
+
+fn main_detail_panel() -> Element<'static, Message> {
+    top_panel_shell(row![
+        detail_panel(
+            "Main Output",
+            column![
+                row![module_chip("LR"), module_chip("MC")].spacing(8),
+                module_detail_placeholder("Pan"),
+                placeholder_radio_list(&["L/R + Mono", "LCR"]),
+            ]
+            .spacing(10)
+        ),
+        detail_panel(
+            "Panning Mode",
+            row![tiny_horizontal_meter("Left"), tiny_horizontal_meter("Right")].spacing(10)
+        ),
+        detail_panel(
+            "Group Assignments",
+            column![
+                row![module_chip("X"), module_chip("Y")].spacing(8),
+                placeholder_dot_row(8),
+                row![
+                    module_chip("1"),
+                    module_chip("2"),
+                    module_chip("3"),
+                    module_chip("4"),
+                    module_chip("5"),
+                    module_chip("6"),
+                ]
+                .spacing(6),
+            ]
+            .spacing(12)
+        ),
+    ])
+}
+
+fn fx_detail_panel() -> Element<'static, Message> {
+    top_panel_shell(row![
+        fx_slot_panel("FX 1", "Stereo Guitar Amp"),
+        fx_slot_panel("FX 2", "Hall Reverb"),
+        fx_slot_panel("FX 3", "Stereo Delay"),
+        fx_slot_panel("FX 4", "Stereo Chorus"),
+    ])
+}
+
+fn detail_panel<'a>(
+    title: &'static str,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    container(
+        column![
+            text(title).size(14).color(Color::from_rgb8(0xC7, 0xC9, 0xD3)),
+            content.into(),
+        ]
+        .spacing(10)
+        .align_x(iced::Alignment::Center),
+    )
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x1A, 0x1A, 0x1C))),
+        border: Border {
+            color: Color::from_rgb8(0x4B, 0x4B, 0x4B),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .padding([10, 10])
+    .height(Length::Fixed(220.0))
+    .width(Length::Fixed(160.0))
+    .into()
+}
+
+fn top_panel_shell<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content.into())
+        .padding([0, 0])
+        .height(Length::Shrink)
+        .width(Length::Fill)
+        .into()
+}
+
+fn module_detail_placeholder<'a>(label: &'static str) -> Element<'a, Message> {
+    column![
+        container(text(label).size(14).color(Color::from_rgb8(0xE6, 0xE8, 0xEE)))
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x4B, 0x4B, 0x4B))),
+                border: Border {
+                    color: Color::from_rgb8(0x7A, 0x7D, 0x82),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            })
+            .padding([4, 14]),
+        container(Space::new().width(Length::Fixed(110.0)).height(Length::Fixed(72.0)))
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x06, 0x07, 0x09))),
+                border: Border {
+                    color: Color::from_rgb8(0x5A, 0x5D, 0x63),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }),
+    ]
+    .spacing(10)
+    .align_x(iced::Alignment::Center)
+    .into()
+}
+
+fn placeholder_text(label: &'static str) -> Element<'static, Message> {
+    text(label)
+        .size(13)
+        .color(Color::from_rgb8(0xB9, 0xBC, 0xC2))
+        .into()
+}
+
+fn placeholder_button(label: &'static str) -> Element<'static, Message> {
+    container(text(label).size(13).color(Color::from_rgb8(0xE1, 0xE4, 0xEA)))
+        .padding([4, 10])
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x4B, 0x4B, 0x4B))),
+            border: Border {
+                color: Color::from_rgb8(0x6A, 0x6D, 0x73),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn placeholder_select(label: &'static str) -> Element<'static, Message> {
+    container(
+        row![
+            text(label).size(13).color(Color::from_rgb8(0xE1, 0xE4, 0xEA)),
+            text("▾").size(13).color(Color::from_rgb8(0xB9, 0xBC, 0xC2)),
+        ]
+        .spacing(18)
+    )
+    .padding([4, 8])
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x12, 0x12, 0x14))),
+        border: Border {
+            color: Color::from_rgb8(0x4A, 0x4D, 0x52),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+fn module_chip(label: &'static str) -> Element<'static, Message> {
+    container(text(label).size(12).color(Color::from_rgb8(0xBF, 0xC3, 0xCB)))
+        .padding([3, 6])
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x1A, 0x1B, 0x1F))),
+            border: Border {
+                color: Color::from_rgb8(0x5A, 0x5D, 0x63),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn placeholder_radio_list(items: &[&'static str]) -> Element<'static, Message> {
+    items.iter().fold(column!().spacing(4), |column, item| {
+        column.push(
+            row![
+                text("○").size(12).color(Color::from_rgb8(0x8E, 0x94, 0x9D)),
+                text(*item).size(12).color(Color::from_rgb8(0xB9, 0xBC, 0xC2)),
+            ]
+            .spacing(6),
+        )
+    }).into()
+}
+
+fn placeholder_dot_row(count: usize) -> Element<'static, Message> {
+    (0..count).fold(row!().spacing(6), |row, n| {
+        row.push(module_chip(Box::leak((n + 1).to_string().into_boxed_str())))
+    }).into()
+}
+
+fn tiny_vertical_meter(label: &'static str) -> Element<'static, Message> {
+    column![
+        container(Space::new().width(Length::Fixed(16.0)).height(Length::Fixed(76.0)))
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
+                border: Border {
+                    color: Color::from_rgb8(0x3E, 0x42, 0x48),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }),
+        text(label).size(11).color(Color::from_rgb8(0x9D, 0xA3, 0xAC)),
+    ]
+    .spacing(4)
+    .align_x(iced::Alignment::Center)
+    .into()
+}
+
+fn tiny_horizontal_meter(label: &'static str) -> Element<'static, Message> {
+    column![
+        text(label).size(11).color(Color::from_rgb8(0x9D, 0xA3, 0xAC)),
+        container(Space::new().width(Length::Fixed(70.0)).height(Length::Fixed(12.0)))
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
+                border: Border {
+                    color: Color::from_rgb8(0x3E, 0x42, 0x48),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }),
+    ]
+    .spacing(4)
+    .into()
+}
+
+fn eq_graph_placeholder() -> Element<'static, Message> {
+    container(Space::new().width(Length::Fixed(520.0)).height(Length::Fixed(92.0)))
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x0B, 0x0C, 0x10))),
+            border: Border {
+                color: Color::from_rgb8(0x4A, 0x4D, 0x52),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn eq_band_box(label: &'static str, freq: &'static str) -> Element<'static, Message> {
+    container(
+        column![
+            text(label).size(12).color(Color::from_rgb8(0xD7, 0xDA, 0xE0)),
+            text("PEQ").size(12).color(mixer_accent_color()),
+            text(freq).size(11).color(Color::from_rgb8(0xA9, 0xAC, 0xB3)),
+        ]
+        .spacing(2),
+    )
+    .padding([6, 8])
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
+        border: Border {
+            color: Color::from_rgb8(0x4A, 0x4D, 0x52),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+fn channel_send_row_placeholder(bus: &'static str) -> Element<'static, Message> {
+    column![
+        text(bus).size(12).color(mixer_accent_color()),
+        container(Space::new().width(Length::Fixed(56.0)).height(Length::Fixed(10.0)))
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
+                border: Border {
+                    color: Color::from_rgb8(0x3E, 0x42, 0x48),
+                    width: 1.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            }),
+    ]
+    .spacing(4)
+    .align_x(iced::Alignment::Center)
+    .into()
+}
+
+fn fx_slot_panel(title: &'static str, effect: &'static str) -> Element<'static, Message> {
+    detail_panel(
+        title,
+        column![
+            placeholder_select(effect),
+            module_detail_placeholder("FX"),
+            row![placeholder_select("Bus 13"), tiny_vertical_meter(""),].spacing(8),
+            row![placeholder_select("Bus 13"), tiny_vertical_meter(""),].spacing(8),
+            placeholder_button("Tap"),
+        ]
+        .spacing(8),
+    )
+}
+
+fn channel_send_row<'a>(
+    strip_index: usize,
+    bus_index: usize,
+    bus: u8,
+    send_value: f32,
+) -> Element<'a, Message> {
+    row![
+        text(format!("{bus:02}"))
+            .size(13)
+            .width(Length::Fixed(22.0))
+            .color(Color::from_rgb8(0x29, 0xE6, 0xF2)),
+        horizontal_slider(0.0..=1.0, send_value, move |next| {
+            Message::SendChanged(strip_index, bus_index, next)
+        })
+        .fill_from_start()
+        .step(0.01)
+        .double_click_reset(0.0)
+        .width(Length::Fixed(110.0))
+        .height(Length::Fixed(10.0)),
+    ]
+    .spacing(8)
+    .align_y(iced::Alignment::Center)
     .into()
 }
 
