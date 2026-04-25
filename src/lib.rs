@@ -1,3 +1,4 @@
+pub mod app;
 mod x32;
 
 pub use x32::{

@@ -1,5 +1,7 @@
 # mixosc
 
+[![crates.io](https://img.shields.io/crates/v/mixosc.svg)](https://crates.io/crates/mixosc)
+
 Rust OSC client for Behringer X32-family mixers.
 
 ![MixOSC](images/mixosc.png)
