@@ -790,19 +790,17 @@ fn update(app: &mut StatusApp, message: Message) -> Task<Message> {
             match result {
                 Ok(ProbeOutcome::Connected { response, .. }) => {
                     app.status = ConnectionStatus::Connected(response);
-                    if !was_connected {
-                        if let Some(mixer_addr) = app.mixer_addr {
-                            return Task::batch([
-                                spawn_load_names(mixer_addr),
-                                spawn_load_colors(mixer_addr),
-                                spawn_load_gains(mixer_addr),
-                                spawn_load_sends(mixer_addr),
-                                spawn_load_pans(mixer_addr),
-                                spawn_load_faders(mixer_addr),
-                                spawn_load_mutes(mixer_addr),
-                                spawn_load_solos(mixer_addr),
-                            ]);
-                        }
+                    if !was_connected && let Some(mixer_addr) = app.mixer_addr {
+                        return Task::batch([
+                            spawn_load_names(mixer_addr),
+                            spawn_load_colors(mixer_addr),
+                            spawn_load_gains(mixer_addr),
+                            spawn_load_sends(mixer_addr),
+                            spawn_load_pans(mixer_addr),
+                            spawn_load_faders(mixer_addr),
+                            spawn_load_mutes(mixer_addr),
+                            spawn_load_solos(mixer_addr),
+                        ]);
                     }
                 }
                 Ok(ProbeOutcome::Disconnected) => {
@@ -958,20 +956,23 @@ fn view(app: &StatusApp) -> Element<'_, Message> {
         content
     };
 
-    container(body).width(Length::Fill).height(Length::Fill).into()
+    container(body)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 fn top_detail_panel(app: &StatusApp) -> Option<Element<'_, Message>> {
     match app.active_view {
         AppView::Mixer => None,
         AppView::Channel => Some(channel_detail_panel(app)),
-        AppView::Config => Some(config_detail_panel().into()),
-        AppView::Gate => Some(gate_detail_panel().into()),
-        AppView::Dyn => Some(dyn_detail_panel().into()),
-        AppView::Eq => Some(eq_detail_panel().into()),
-        AppView::Sends => Some(sends_detail_panel().into()),
-        AppView::Main => Some(main_detail_panel().into()),
-        AppView::Fx => Some(fx_detail_panel().into()),
+        AppView::Config => Some(config_detail_panel()),
+        AppView::Gate => Some(gate_detail_panel()),
+        AppView::Dyn => Some(dyn_detail_panel()),
+        AppView::Eq => Some(eq_detail_panel()),
+        AppView::Sends => Some(sends_detail_panel()),
+        AppView::Main => Some(main_detail_panel()),
+        AppView::Fx => Some(fx_detail_panel()),
     }
 }
 
@@ -1738,6 +1739,7 @@ fn mixer_strips(app: &StatusApp) -> Element<'_, Message> {
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn strip_mixer_top(
     index: usize,
     target: FaderTarget,
@@ -1754,8 +1756,7 @@ fn strip_mixer_top(
         || matches!(
             target,
             FaderTarget::Bus(_) | FaderTarget::FxRtn(_) | FaderTarget::Mtx(_) | FaderTarget::Dca(_)
-        )
-    {
+        ) {
         Space::new().height(Length::Fixed(26.0)).into()
     } else {
         column![
@@ -1796,7 +1797,9 @@ fn strip_mixer_top(
             .into()
         };
 
-    let mut top = column![gain_block].spacing(10).align_x(iced::Alignment::Center);
+    let mut top = column![gain_block]
+        .spacing(10)
+        .align_x(iced::Alignment::Center);
     if !hide_upper_controls && !matches!(target, FaderTarget::Mtx(_) | FaderTarget::Dca(_)) {
         top = top.push(sends);
         top = top.push(
@@ -1853,29 +1856,22 @@ fn channel_detail_panel(app: &StatusApp) -> Element<'_, Message> {
             text(format_pan_label(pan_value))
                 .size(18)
                 .color(Color::from_rgb8(0xE6, 0xE8, 0xEE)),
-            horizontal_slider(0.0..=1.0, pan_value, move |next| Message::PanChanged(index, next))
-                .step(0.01)
-                .double_click_reset(0.5)
-                .width(Length::Fixed(150.0))
-                .height(Length::Fixed(14.0)),
+            horizontal_slider(0.0..=1.0, pan_value, move |next| Message::PanChanged(
+                index, next
+            ))
+            .step(0.01)
+            .double_click_reset(0.5)
+            .width(Length::Fixed(150.0))
+            .height(Length::Fixed(14.0)),
         ]
         .spacing(10)
         .align_x(iced::Alignment::Center),
     );
 
-    container(
-        row![
-            gate_panel,
-            eq_panel,
-            dyn_panel,
-            sends_panel,
-            balance_panel,
-        ]
-        .spacing(2),
-    )
-    .height(Length::Shrink)
-    .width(Length::Fill)
-    .into()
+    container(row![gate_panel, eq_panel, dyn_panel, sends_panel, balance_panel,].spacing(2))
+        .height(Length::Shrink)
+        .width(Length::Fill)
+        .into()
 }
 
 fn config_detail_panel() -> Element<'static, Message> {
@@ -1963,11 +1959,7 @@ fn gate_detail_panel() -> Element<'static, Message> {
             column![
                 module_detail_placeholder("SC"),
                 placeholder_select("Self"),
-                row![
-                    tiny_vertical_meter("Type"),
-                    tiny_vertical_meter("Freq"),
-                ]
-                .spacing(14),
+                row![tiny_vertical_meter("Type"), tiny_vertical_meter("Freq"),].spacing(14),
             ]
             .spacing(8)
         ),
@@ -2012,11 +2004,7 @@ fn dyn_detail_panel() -> Element<'static, Message> {
             column![
                 module_detail_placeholder("SC"),
                 placeholder_select("Self"),
-                row![
-                    tiny_vertical_meter("Type"),
-                    tiny_vertical_meter("Freq"),
-                ]
-                .spacing(14),
+                row![tiny_vertical_meter("Type"), tiny_vertical_meter("Freq"),].spacing(14),
             ]
             .spacing(8)
         ),
@@ -2058,7 +2046,14 @@ fn sends_detail_panel() -> Element<'static, Message> {
         detail_panel(
             "Tap",
             column![
-                placeholder_radio_list(&["Input", "Pre EQ", "Post EQ", "Pre Fader", "Post Fader", "Sub Group"]),
+                placeholder_radio_list(&[
+                    "Input",
+                    "Pre EQ",
+                    "Post EQ",
+                    "Pre Fader",
+                    "Post Fader",
+                    "Sub Group"
+                ]),
                 row![
                     module_chip("Bus 1"),
                     module_chip("Bus 2"),
@@ -2119,7 +2114,11 @@ fn main_detail_panel() -> Element<'static, Message> {
         ),
         detail_panel(
             "Panning Mode",
-            row![tiny_horizontal_meter("Left"), tiny_horizontal_meter("Right")].spacing(10)
+            row![
+                tiny_horizontal_meter("Left"),
+                tiny_horizontal_meter("Right")
+            ]
+            .spacing(10)
         ),
         detail_panel(
             "Group Assignments",
@@ -2156,7 +2155,9 @@ fn detail_panel<'a>(
 ) -> Element<'a, Message> {
     container(
         column![
-            text(title).size(14).color(Color::from_rgb8(0xC7, 0xC9, 0xD3)),
+            text(title)
+                .size(14)
+                .color(Color::from_rgb8(0xC7, 0xC9, 0xD3)),
             content.into(),
         ]
         .spacing(10)
@@ -2187,27 +2188,35 @@ fn top_panel_shell<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, 
 
 fn module_detail_placeholder<'a>(label: &'static str) -> Element<'a, Message> {
     column![
-        container(text(label).size(14).color(Color::from_rgb8(0xE6, 0xE8, 0xEE)))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x4B, 0x4B, 0x4B))),
-                border: Border {
-                    color: Color::from_rgb8(0x7A, 0x7D, 0x82),
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            })
-            .padding([4, 14]),
-        container(Space::new().width(Length::Fixed(110.0)).height(Length::Fixed(72.0)))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x06, 0x07, 0x09))),
-                border: Border {
-                    color: Color::from_rgb8(0x5A, 0x5D, 0x63),
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            }),
+        container(
+            text(label)
+                .size(14)
+                .color(Color::from_rgb8(0xE6, 0xE8, 0xEE))
+        )
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x4B, 0x4B, 0x4B))),
+            border: Border {
+                color: Color::from_rgb8(0x7A, 0x7D, 0x82),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
+        .padding([4, 14]),
+        container(
+            Space::new()
+                .width(Length::Fixed(110.0))
+                .height(Length::Fixed(72.0))
+        )
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x06, 0x07, 0x09))),
+            border: Border {
+                color: Color::from_rgb8(0x5A, 0x5D, 0x63),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        }),
     ]
     .spacing(10)
     .align_x(iced::Alignment::Center)
@@ -2222,27 +2231,33 @@ fn placeholder_text(label: &'static str) -> Element<'static, Message> {
 }
 
 fn placeholder_button(label: &'static str) -> Element<'static, Message> {
-    container(text(label).size(13).color(Color::from_rgb8(0xE1, 0xE4, 0xEA)))
-        .padding([4, 10])
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x4B, 0x4B, 0x4B))),
-            border: Border {
-                color: Color::from_rgb8(0x6A, 0x6D, 0x73),
-                width: 1.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
+    container(
+        text(label)
+            .size(13)
+            .color(Color::from_rgb8(0xE1, 0xE4, 0xEA)),
+    )
+    .padding([4, 10])
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x4B, 0x4B, 0x4B))),
+        border: Border {
+            color: Color::from_rgb8(0x6A, 0x6D, 0x73),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn placeholder_select(label: &'static str) -> Element<'static, Message> {
     container(
         row![
-            text(label).size(13).color(Color::from_rgb8(0xE1, 0xE4, 0xEA)),
+            text(label)
+                .size(13)
+                .color(Color::from_rgb8(0xE1, 0xE4, 0xEA)),
             text("▾").size(13).color(Color::from_rgb8(0xB9, 0xBC, 0xC2)),
         ]
-        .spacing(18)
+        .spacing(18),
     )
     .padding([4, 8])
     .style(|_theme: &Theme| container::Style {
@@ -2258,51 +2273,68 @@ fn placeholder_select(label: &'static str) -> Element<'static, Message> {
 }
 
 fn module_chip(label: &'static str) -> Element<'static, Message> {
-    container(text(label).size(12).color(Color::from_rgb8(0xBF, 0xC3, 0xCB)))
-        .padding([3, 6])
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x1A, 0x1B, 0x1F))),
-            border: Border {
-                color: Color::from_rgb8(0x5A, 0x5D, 0x63),
-                width: 1.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
+    container(
+        text(label)
+            .size(12)
+            .color(Color::from_rgb8(0xBF, 0xC3, 0xCB)),
+    )
+    .padding([3, 6])
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x1A, 0x1B, 0x1F))),
+        border: Border {
+            color: Color::from_rgb8(0x5A, 0x5D, 0x63),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+fn placeholder_radio_list(items: &[&'static str]) -> Element<'static, Message> {
+    items
+        .iter()
+        .fold(column!().spacing(4), |column, item| {
+            column.push(
+                row![
+                    text("○").size(12).color(Color::from_rgb8(0x8E, 0x94, 0x9D)),
+                    text(*item)
+                        .size(12)
+                        .color(Color::from_rgb8(0xB9, 0xBC, 0xC2)),
+                ]
+                .spacing(6),
+            )
         })
         .into()
 }
 
-fn placeholder_radio_list(items: &[&'static str]) -> Element<'static, Message> {
-    items.iter().fold(column!().spacing(4), |column, item| {
-        column.push(
-            row![
-                text("○").size(12).color(Color::from_rgb8(0x8E, 0x94, 0x9D)),
-                text(*item).size(12).color(Color::from_rgb8(0xB9, 0xBC, 0xC2)),
-            ]
-            .spacing(6),
-        )
-    }).into()
-}
-
 fn placeholder_dot_row(count: usize) -> Element<'static, Message> {
-    (0..count).fold(row!().spacing(6), |row, n| {
-        row.push(module_chip(Box::leak((n + 1).to_string().into_boxed_str())))
-    }).into()
+    (0..count)
+        .fold(row!().spacing(6), |row, n| {
+            row.push(module_chip(Box::leak((n + 1).to_string().into_boxed_str())))
+        })
+        .into()
 }
 
 fn tiny_vertical_meter(label: &'static str) -> Element<'static, Message> {
     column![
-        container(Space::new().width(Length::Fixed(16.0)).height(Length::Fixed(76.0)))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
-                border: Border {
-                    color: Color::from_rgb8(0x3E, 0x42, 0x48),
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            }),
-        text(label).size(11).color(Color::from_rgb8(0x9D, 0xA3, 0xAC)),
+        container(
+            Space::new()
+                .width(Length::Fixed(16.0))
+                .height(Length::Fixed(76.0))
+        )
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
+            border: Border {
+                color: Color::from_rgb8(0x3E, 0x42, 0x48),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        }),
+        text(label)
+            .size(11)
+            .color(Color::from_rgb8(0x9D, 0xA3, 0xAC)),
     ]
     .spacing(4)
     .align_x(iced::Alignment::Center)
@@ -2311,42 +2343,56 @@ fn tiny_vertical_meter(label: &'static str) -> Element<'static, Message> {
 
 fn tiny_horizontal_meter(label: &'static str) -> Element<'static, Message> {
     column![
-        text(label).size(11).color(Color::from_rgb8(0x9D, 0xA3, 0xAC)),
-        container(Space::new().width(Length::Fixed(70.0)).height(Length::Fixed(12.0)))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
-                border: Border {
-                    color: Color::from_rgb8(0x3E, 0x42, 0x48),
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            }),
+        text(label)
+            .size(11)
+            .color(Color::from_rgb8(0x9D, 0xA3, 0xAC)),
+        container(
+            Space::new()
+                .width(Length::Fixed(70.0))
+                .height(Length::Fixed(12.0))
+        )
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
+            border: Border {
+                color: Color::from_rgb8(0x3E, 0x42, 0x48),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        }),
     ]
     .spacing(4)
     .into()
 }
 
 fn eq_graph_placeholder() -> Element<'static, Message> {
-    container(Space::new().width(Length::Fixed(520.0)).height(Length::Fixed(92.0)))
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x0B, 0x0C, 0x10))),
-            border: Border {
-                color: Color::from_rgb8(0x4A, 0x4D, 0x52),
-                width: 1.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
+    container(
+        Space::new()
+            .width(Length::Fixed(520.0))
+            .height(Length::Fixed(92.0)),
+    )
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x0B, 0x0C, 0x10))),
+        border: Border {
+            color: Color::from_rgb8(0x4A, 0x4D, 0x52),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn eq_band_box(label: &'static str, freq: &'static str) -> Element<'static, Message> {
     container(
         column![
-            text(label).size(12).color(Color::from_rgb8(0xD7, 0xDA, 0xE0)),
+            text(label)
+                .size(12)
+                .color(Color::from_rgb8(0xD7, 0xDA, 0xE0)),
             text("PEQ").size(12).color(mixer_accent_color()),
-            text(freq).size(11).color(Color::from_rgb8(0xA9, 0xAC, 0xB3)),
+            text(freq)
+                .size(11)
+                .color(Color::from_rgb8(0xA9, 0xAC, 0xB3)),
         ]
         .spacing(2),
     )
@@ -2366,16 +2412,20 @@ fn eq_band_box(label: &'static str, freq: &'static str) -> Element<'static, Mess
 fn channel_send_row_placeholder(bus: &'static str) -> Element<'static, Message> {
     column![
         text(bus).size(12).color(mixer_accent_color()),
-        container(Space::new().width(Length::Fixed(56.0)).height(Length::Fixed(10.0)))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
-                border: Border {
-                    color: Color::from_rgb8(0x3E, 0x42, 0x48),
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            }),
+        container(
+            Space::new()
+                .width(Length::Fixed(56.0))
+                .height(Length::Fixed(10.0))
+        )
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x20, 0x22, 0x26))),
+            border: Border {
+                color: Color::from_rgb8(0x3E, 0x42, 0x48),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        }),
     ]
     .spacing(4)
     .align_x(iced::Alignment::Center)

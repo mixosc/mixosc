@@ -40,6 +40,12 @@ pub struct DiscoveryProbe {
     timeout: Duration,
 }
 
+impl Default for DiscoveryProbe {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DiscoveryProbe {
     pub fn new() -> Self {
         Self {
@@ -85,10 +91,10 @@ impl DiscoveryProbe {
         loop {
             match socket.recv_from(&mut buffer) {
                 Ok((received, responder)) => {
-                    if let Some(mixer) = parse_discovered_mixer(&buffer[..received], responder) {
-                        if mixers.iter().all(|known| known.addr != mixer.addr) {
-                            mixers.push(mixer);
-                        }
+                    if let Some(mixer) = parse_discovered_mixer(&buffer[..received], responder)
+                        && mixers.iter().all(|known| known.addr != mixer.addr)
+                    {
+                        mixers.push(mixer);
                     }
 
                     if start.elapsed() >= self.timeout {
@@ -1387,7 +1393,7 @@ fn osc_int_message(address: &str, value: i32) -> Vec<u8> {
 fn osc_string(value: &str) -> Vec<u8> {
     let mut bytes = value.as_bytes().to_vec();
     bytes.push(0);
-    while bytes.len() % 4 != 0 {
+    while !bytes.len().is_multiple_of(4) {
         bytes.push(0);
     }
     bytes
@@ -1430,13 +1436,12 @@ fn target_from_channel_path(path: &str, suffix: &str) -> Option<FaderTarget> {
     }
 
     // DCA paths have a different structure without /mix/ prefix
-    if suffix == FADER_RESPONSE_SUFFIX {
-        if let Some(index) = path
+    if suffix == FADER_RESPONSE_SUFFIX
+        && let Some(index) = path
             .strip_prefix("/dca/")
             .and_then(|rest| rest.strip_suffix("/fader"))
-        {
-            return index.parse::<u8>().ok().map(FaderTarget::Dca);
-        }
+    {
+        return index.parse::<u8>().ok().map(FaderTarget::Dca);
     }
     if suffix == MUTE_RESPONSE_SUFFIX {
         if let Some(index) = path
@@ -1452,13 +1457,12 @@ fn target_from_channel_path(path: &str, suffix: &str) -> Option<FaderTarget> {
             return index.parse::<u8>().ok().map(FaderTarget::Dca);
         }
     }
-    if suffix == NAME_RESPONSE_SUFFIX {
-        if let Some(index) = path
+    if suffix == NAME_RESPONSE_SUFFIX
+        && let Some(index) = path
             .strip_prefix("/dca/")
             .and_then(|rest| rest.strip_suffix("/config/name"))
-        {
-            return index.parse::<u8>().ok().map(FaderTarget::Dca);
-        }
+    {
+        return index.parse::<u8>().ok().map(FaderTarget::Dca);
     }
 
     if path == format!("/main/st{suffix}") {
@@ -1623,7 +1627,7 @@ fn parse_switch_value(packet: &[u8]) -> Option<(String, bool)> {
     let path = osc_address(packet)?;
     if !path.ends_with(MUTE_RESPONSE_SUFFIX)
         && !path.starts_with(SOLO_RESPONSE_PREFIX)
-        && !is_dca_mute_path(&path)
+        && !is_dca_mute_path(path)
     {
         return None;
     }
