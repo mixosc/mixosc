@@ -1,6 +1,6 @@
 [package]
 name = "mixosc"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 description = "Rust OSC client and control surface for Behringer X32-family mixers"
 license = "BSD-2-Clause"
@@ -13,5 +13,5 @@ categories = ["multimedia::audio"]
 [dependencies]
 iced = { version = "0.14.0", features = ["tokio"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
-maolan-widgets = "0.0.6"
+maolan-widgets = "0.0.7"
 tokio = { version = "1", features = ["net", "time"] }
